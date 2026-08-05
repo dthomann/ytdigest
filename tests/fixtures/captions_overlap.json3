@@ -1,0 +1,11 @@
+{
+  "wireMagic": "pb3",
+  "events": [
+    {"tStartMs": 0, "dDurationMs": 4000, "segs": [{"utf8": "so today we're going to talk"}]},
+    {"tStartMs": 2000, "dDurationMs": 4000, "segs": [{"utf8": "we're going to talk about the new"}]},
+    {"tStartMs": 4000, "dDurationMs": 4000, "segs": [{"utf8": "about the new release and what"}]},
+    {"tStartMs": 6000, "dDurationMs": 4000, "segs": [{"utf8": "release and what it means for you"}]},
+    {"tStartMs": 8500, "dDurationMs": 3000, "segs": [{"utf8": "[Music]"}]},
+    {"tStartMs": 11000, "dDurationMs": 3000, "segs": [{"utf8": "let's get started"}]}
+  ]
+}

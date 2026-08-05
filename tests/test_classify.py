@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from ytdigest.classify import classify_all, classify_row
 from ytdigest.metadata import _extract, parse_duration
 from ytdigest.models import VideoKind, VideoState
@@ -40,6 +42,86 @@ def test_classify_upcoming_livestream_p0d_not_swallowed_by_duration_branch():
     # P0D parses to 0 seconds, which is <= min_duration; live status must win.
     state, kind = classify_row("upcoming", None, 0, min_duration_seconds=180)
     assert state == VideoState.LIVE_UPCOMING.value
+    assert kind == VideoKind.LIVE.value
+
+
+def test_classify_upcoming_with_schedule_stays_upcoming():
+    state, kind = classify_row(
+        "upcoming",
+        None,
+        0,
+        min_duration_seconds=180,
+        scheduled_start="2026-08-06T18:00:00Z",
+    )
+    assert state == VideoState.LIVE_UPCOMING.value
+    assert kind == VideoKind.LIVE.value
+
+
+def test_classify_stale_upcoming_vod_with_duration():
+    state, kind = classify_row(
+        "upcoming",
+        None,
+        3600,
+        min_duration_seconds=180,
+        scheduled_start=None,
+    )
+    assert state == VideoState.LIVE_FINISHED.value
+    assert kind == VideoKind.LIVE.value
+
+
+def test_classify_stale_upcoming_old_published_at():
+    state, kind = classify_row(
+        "upcoming",
+        None,
+        0,
+        min_duration_seconds=180,
+        scheduled_start=None,
+        published_at="2025-12-28T12:41:54+00:00",
+        now=datetime(2026, 8, 5, 10, 0, tzinfo=timezone.utc),
+    )
+    assert state == VideoState.LIVE_FINISHED.value
+    assert kind == VideoKind.LIVE.value
+
+
+def test_classify_stale_upcoming_past_scheduled_start():
+    state, kind = classify_row(
+        "upcoming",
+        None,
+        0,
+        min_duration_seconds=180,
+        scheduled_start="2026-08-04T18:00:00Z",
+        now=datetime(2026, 8, 5, 10, 0, tzinfo=timezone.utc),
+    )
+    assert state == VideoState.LIVE_FINISHED.value
+    assert kind == VideoKind.LIVE.value
+
+
+def test_classify_recent_upcoming_without_schedule_stays_upcoming():
+    state, kind = classify_row(
+        "upcoming",
+        None,
+        0,
+        min_duration_seconds=180,
+        scheduled_start=None,
+        published_at="2026-08-05T09:00:00+00:00",
+        now=datetime(2026, 8, 5, 10, 0, tzinfo=timezone.utc),
+    )
+    assert state == VideoState.LIVE_UPCOMING.value
+    assert kind == VideoKind.LIVE.value
+    state, kind = classify_row(
+        "upcoming",
+        None,
+        3600,
+        min_duration_seconds=180,
+        scheduled_start=None,
+    )
+    assert state == VideoState.LIVE_FINISHED.value
+    assert kind == VideoKind.LIVE.value
+
+
+def test_classify_upcoming_with_actual_end_is_finished():
+    state, kind = classify_row("upcoming", "2026-08-04T21:04:00Z", 0, min_duration_seconds=180)
+    assert state == VideoState.LIVE_FINISHED.value
     assert kind == VideoKind.LIVE.value
 
 

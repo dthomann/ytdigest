@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,31 @@ from ytdigest.config import Config
 from ytdigest.util import utcnow_iso
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+_ENV_KEYS = (
+    "YOUTUBE_API_KEY",
+    "GEMINI_API_KEY",
+    "GROQ_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_ALLOWED_CHAT_ID",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_env():
+    """load_config() calls python-dotenv with override=False, which only ever *adds* to
+    os.environ and never clears it — so a secret set by one test's .env leaks into every test
+    that runs afterward in the same process. Snapshot and restore the secret-relevant keys
+    around each test so `.env` files stay test-local."""
+    saved = {k: os.environ.get(k) for k in _ENV_KEYS}
+    for k in _ENV_KEYS:
+        os.environ.pop(k, None)
+    yield
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 def load_fixture_text(name: str) -> str:

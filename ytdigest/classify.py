@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -18,6 +19,41 @@ RECHECK_STATES = {VideoState.DISCOVERED.value, VideoState.LIVE_UPCOMING.value, V
 
 SHORTS_PROBE_LOW = 60
 SHORTS_PROBE_HIGH = 180
+STALE_UPCOMING_GRACE = timedelta(hours=6)
+
+
+def _parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("could not parse timestamp %r", ts)
+        return None
+
+
+def is_stale_upcoming(
+    scheduled_start: str | None,
+    published_at: str | None,
+    duration_seconds: int | None,
+    min_duration_seconds: int,
+    now: datetime | None = None,
+) -> bool:
+    """True when YouTube's upcoming flag is no longer credible."""
+    now = now or datetime.now(timezone.utc)
+
+    start = _parse_iso(scheduled_start)
+    if start is not None:
+        return start + STALE_UPCOMING_GRACE < now
+
+    if duration_seconds is not None and duration_seconds > min_duration_seconds:
+        return True
+
+    published = _parse_iso(published_at)
+    if published is not None and published + STALE_UPCOMING_GRACE < now:
+        return True
+
+    return False
 
 
 def classify_row(
@@ -26,16 +62,29 @@ def classify_row(
     duration_seconds: int | None,
     min_duration_seconds: int,
     summarize_finished_livestreams: bool = False,
+    scheduled_start: str | None = None,
+    published_at: str | None = None,
+    now: datetime | None = None,
 ) -> tuple[str, str]:
     """Pure classification function. Returns (state, kind)."""
-    if live_broadcast == "upcoming":
-        return VideoState.LIVE_UPCOMING.value, VideoKind.LIVE.value
-    if live_broadcast == "live":
-        return VideoState.LIVE_NOW.value, VideoKind.LIVE.value
     if actual_end is not None:
         if summarize_finished_livestreams:
             return VideoState.NEEDS_TRANSCRIPT.value, VideoKind.LIVE.value
         return VideoState.LIVE_FINISHED.value, VideoKind.LIVE.value
+    if live_broadcast == "upcoming":
+        if is_stale_upcoming(
+            scheduled_start,
+            published_at,
+            duration_seconds,
+            min_duration_seconds,
+            now=now,
+        ):
+            if summarize_finished_livestreams:
+                return VideoState.NEEDS_TRANSCRIPT.value, VideoKind.LIVE.value
+            return VideoState.LIVE_FINISHED.value, VideoKind.LIVE.value
+        return VideoState.LIVE_UPCOMING.value, VideoKind.LIVE.value
+    if live_broadcast == "live":
+        return VideoState.LIVE_NOW.value, VideoKind.LIVE.value
     if duration_seconds is None:
         return VideoState.DISCOVERED.value, VideoKind.UNKNOWN.value
     if duration_seconds <= min_duration_seconds:
@@ -70,11 +119,19 @@ def classify_all(
 
     counts: dict[str, int] = {}
     now = utcnow_iso()
+    now_dt = datetime.now(timezone.utc)
 
     for row in rows:
         duration = row["duration_seconds"]
         state, kind = classify_row(
-            row["live_broadcast"], row["actual_end"], duration, min_duration, summarize_finished
+            row["live_broadcast"],
+            row["actual_end"],
+            duration,
+            min_duration,
+            summarize_finished,
+            scheduled_start=row["scheduled_start"],
+            published_at=row["published_at"],
+            now=now_dt,
         )
 
         if (

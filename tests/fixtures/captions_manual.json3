@@ -1,0 +1,7 @@
+{
+  "wireMagic": "pb3",
+  "events": [
+    {"tStartMs": 0, "dDurationMs": 3000, "segs": [{"utf8": "Welcome back to the show."}]},
+    {"tStartMs": 3000, "dDurationMs": 3000, "segs": [{"utf8": "Today we have a special guest."}]}
+  ]
+}

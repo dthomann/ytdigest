@@ -122,11 +122,44 @@ def test_dry_run_performs_zero_writes_and_zero_outbound_calls(tmp_path, monkeypa
     assert conn.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"] == 0
 
 
+def fake_transcript_phase(conn, config, limit=None):
+    from ytdigest.transcript import TranscriptPhaseResult
+
+    rows = conn.execute("SELECT video_id FROM videos WHERE state = 'needs_transcript'").fetchall()
+    ids = [r["video_id"] for r in rows]
+    now = "2026-08-05T00:00:00+00:00"
+    conn.executemany(
+        "UPDATE videos SET state = 'has_transcript', transcript_source = 'captions_api', "
+        "transcript_chars = 500, updated_at = ? WHERE video_id = ?",
+        [(now, vid) for vid in ids],
+    )
+    conn.commit()
+    return TranscriptPhaseResult(attempted=len(ids), succeeded_ids=ids)
+
+
+def fake_summarize_phase(conn, config, transcripts_dir, api_key, post_fn=None):
+    from ytdigest.summarize import SummarizePhaseResult
+
+    rows = conn.execute("SELECT video_id FROM videos WHERE state = 'has_transcript'").fetchall()
+    ids = [r["video_id"] for r in rows]
+    now = "2026-08-05T00:00:00+00:00"
+    conn.executemany(
+        "UPDATE videos SET state = 'summarized', summary = 'A concrete, specific summary.', "
+        "summary_model = 'test-model', updated_at = ? WHERE video_id = ?",
+        [(now, vid) for vid in ids],
+    )
+    conn.commit()
+    return SummarizePhaseResult(attempted=len(ids), succeeded_ids=ids)
+
+
 def test_full_run_writes_digest_and_delivers(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("ytdigest.discover.requests.get", fake_get)
     monkeypatch.setattr("ytdigest.metadata.requests.get", fake_get)
+    monkeypatch.setattr("ytdigest.cli.transcript_mod.run_transcript_phase", fake_transcript_phase)
+    monkeypatch.setattr("ytdigest.cli.summarize_mod.run_summarize_phase", fake_summarize_phase)
 
     config_path = write_config(tmp_path)
+    (tmp_path / ".env").write_text("YOUTUBE_API_KEY=test-key\nGEMINI_API_KEY=test-key\n")
     config = seed_channels(config_path)
 
     args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout")
@@ -136,12 +169,78 @@ def test_full_run_writes_digest_and_delivers(tmp_path, monkeypatch, capsys):
     assert len(digest_files) == 1
     content = digest_files[0].read_text()
     assert "new videos" in content
+    assert "A concrete, specific summary." in content
 
     captured = capsys.readouterr()
-    assert "new videos" in captured.out
+    assert "A concrete, specific summary." in captured.out
 
     conn = db.connect(config.db_path)
-    needs_transcript = conn.execute(
+    assert conn.execute(
         "SELECT COUNT(*) AS n FROM videos WHERE state = ?", (VideoState.NEEDS_TRANSCRIPT.value,)
+    ).fetchone()["n"] == 0
+    delivered = conn.execute(
+        "SELECT COUNT(*) AS n FROM videos WHERE state = ?", (VideoState.DELIVERED.value,)
     ).fetchone()["n"]
-    assert needs_transcript == 2  # the two normal videos, queued for stage 2
+    assert delivered == 2  # the two normal videos, transcribed+summarized+delivered this run
+
+
+def test_run_refreshes_stale_live_upcoming(tmp_path, monkeypatch, capsys):
+    """live_upcoming rows must get fresh metadata so finished streams don't stay stuck."""
+    def fake_get_with_stale(url, params=None, headers=None, timeout=None):
+        if "youtube/v3/videos" in url:
+            ids = params["id"].split(",")
+            items = []
+            for vid in ids:
+                if vid == "vid_stale_upcoming":
+                    items.append(
+                        {
+                            "id": vid,
+                            "snippet": {
+                                "title": "Old Holiday Stream",
+                                "channelTitle": "Livestream Channel",
+                                "liveBroadcastContent": "none",
+                            },
+                            "contentDetails": {"duration": "PT3H"},
+                            "liveStreamingDetails": {"actualEndTime": "2025-12-24T20:00:00Z"},
+                        }
+                    )
+                else:
+                    fx = VIDEO_ITEM_BY_ID.get(vid)
+                    if fx:
+                        items.append(load_fixture_json(fx)["items"][0])
+            return FakeResponse(json_data={"items": items})
+        return fake_get(url, params, headers, timeout)
+
+    monkeypatch.setattr("ytdigest.discover.requests.get", fake_get_with_stale)
+    monkeypatch.setattr("ytdigest.metadata.requests.get", fake_get_with_stale)
+    monkeypatch.setattr("ytdigest.cli.transcript_mod.run_transcript_phase", fake_transcript_phase)
+    monkeypatch.setattr("ytdigest.cli.summarize_mod.run_summarize_phase", fake_summarize_phase)
+
+    config_path = write_config(tmp_path)
+    config = seed_channels(config_path)
+    conn = db.connect(config.db_path)
+    conn.execute(
+        """
+        INSERT INTO videos
+            (video_id, channel_id, title, state, live_broadcast, duration_seconds,
+             discovered_at, updated_at)
+        VALUES ('vid_stale_upcoming', 'UClivestream000000000000', 'Old Holiday Stream',
+                'live_upcoming', 'upcoming', 0, 'now', 'now')
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout")
+    cli.cmd_run(args)
+
+    conn = db.connect(config.db_path)
+    row = conn.execute(
+        "SELECT state, live_broadcast, actual_end FROM videos WHERE video_id = 'vid_stale_upcoming'"
+    ).fetchone()
+    assert row["state"] == VideoState.LIVE_FINISHED.value
+    assert row["live_broadcast"] == "none"
+    assert row["actual_end"] == "2025-12-24T20:00:00Z"
+
+    captured = capsys.readouterr()
+    assert "Old Holiday Stream" not in captured.out
