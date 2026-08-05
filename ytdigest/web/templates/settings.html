@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Settings — ytdigest{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+{% if flash %}
+<p class="{{ 'success' if flash_ok else 'error' }}">{{ flash }}</p>
+{% endif %}
+
+{% if setup_error %}
+<div class="setup-notice">
+  <p class="error">Cannot manage services: {{ setup_error }}</p>
+</div>
+{% elif snapshot %}
+
+{% if not snapshot.sudo_available %}
+<div class="setup-notice">
+  <p>Service install requires passwordless <code>sudo</code> for the web user. One-time setup on the Pi:</p>
+  <pre>sudo tee /etc/sudoers.d/ytdigest >/dev/null <<'EOF'
+{{ snapshot.sudo_hint }}
+EOF
+sudo chmod 440 /etc/sudoers.d/ytdigest</pre>
+  <p class="meta">Reload this page after applying.</p>
+</div>
+{% endif %}
+
+<section class="settings-section">
+  <h2>Daily run schedule</h2>
+  <p class="meta">
+    Local time for the automatic digest run
+    ({{ snapshot.context.setup_mode }} setup · {{ snapshot.context.install_dir }} · user {{ snapshot.context.service_user }}).
+  </p>
+  <form method="post" action="/settings/schedule" class="schedule-form">
+    <label>
+      Hour (0–23)
+      <input type="number" name="digest_hour" min="0" max="23" value="{{ snapshot.digest_hour }}" required>
+    </label>
+    <label>
+      Timezone
+      <input type="text" name="timezone" value="{{ snapshot.timezone }}" placeholder="Europe/Zurich" required>
+    </label>
+    <button type="submit" class="btn btn-primary">Save schedule</button>
+  </form>
+</section>
+
+<section class="settings-section">
+  <h2>Daily run timer</h2>
+  <p class="meta">systemd timer (<code>ytdigest.timer</code>) — runs the pipeline on schedule.</p>
+  <p class="status-line">
+    {% if snapshot.timer.installed %}
+      {% if snapshot.timer.active %}<span class="success">Active</span>{% elif snapshot.timer.enabled %}<span class="meta">Enabled</span>{% else %}<span class="meta">Installed, disabled</span>{% endif %}
+      {% if snapshot.next_run %} · next run {{ snapshot.next_run }}{% endif %}
+      {% if snapshot.timer.detail %} · {{ snapshot.timer.detail }}{% endif %}
+    {% else %}
+      <span class="meta">Not installed</span>
+    {% endif %}
+  </p>
+  <div class="service-actions">
+    {% if snapshot.timer.installed and snapshot.timer.enabled %}
+    <form method="post" action="/settings/timer/uninstall" class="inline"
+          onsubmit="return confirm('Stop and remove the daily run timer?');">
+      <button type="submit" class="btn btn-danger" {% if not snapshot.sudo_available %}disabled{% endif %}>Uninstall timer</button>
+    </form>
+    {% else %}
+    <form method="post" action="/settings/timer/install" class="inline">
+      <button type="submit" class="btn btn-primary" {% if not snapshot.sudo_available %}disabled{% endif %}>Install timer</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<section class="settings-section">
+  <h2>Web service</h2>
+  <p class="meta">systemd service (<code>ytdigest-web.service</code>) — keeps the web UI running after logout.</p>
+  <p class="status-line">
+    {% if snapshot.web.installed %}
+      {% if snapshot.web.active %}<span class="success">Running under systemd</span>{% elif snapshot.web.enabled %}<span class="error">Enabled but not running</span>{% else %}<span class="meta">Installed, disabled</span>{% endif %}
+      {% if snapshot.web.detail %} · {{ snapshot.web.detail }}{% endif %}
+    {% elif snapshot.manual_web_running %}
+      <span class="meta">Running manually (port {{ request.app.state.config.web_port }})</span>
+    {% else %}
+      <span class="meta">Not running</span>
+    {% endif %}
+  </p>
+  {% if snapshot.manual_web_running %}
+  <p class="meta">Install will hand off from this session to systemd automatically — the page will disconnect briefly, then reload.</p>
+  {% endif %}
+  <div class="service-actions">
+    {% if snapshot.web.installed and snapshot.web.enabled %}
+    <form method="post" action="/settings/web/uninstall" class="inline"
+          onsubmit="return confirm('Stop and remove the web service? The UI will go offline unless you start it manually.');">
+      <button type="submit" class="btn btn-danger" {% if not snapshot.sudo_available %}disabled{% endif %}>Uninstall web service</button>
+    </form>
+    {% else %}
+    <form method="post" action="/settings/web/install" class="inline">
+      <button type="submit" class="btn btn-primary" {% if not snapshot.sudo_available %}disabled{% endif %}>Install web service</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+{% endif %}
+{% endblock %}

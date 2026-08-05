@@ -10,7 +10,7 @@ from starlette.templating import Jinja2Templates
 
 from ..config import Config
 from .. import db
-from .routes import auth, channels, digest, runs
+from .routes import auth, channels, digest, runs, settings
 from .services.run_manager import RunManager
 
 WEB_DIR = Path(__file__).parent
@@ -36,5 +36,6 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(digest.router)
     app.include_router(channels.router)
     app.include_router(auth.router)
+    app.include_router(settings.router)
 
     return app

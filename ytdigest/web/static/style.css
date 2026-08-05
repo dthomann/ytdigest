@@ -198,7 +198,7 @@ h2.section-title { font-size: 1.1rem; color: var(--muted); margin: 2rem 0 1rem; 
   color: var(--text);
 }
 
-.sync-section, .add-section {
+.sync-section, .add-section, .settings-section {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -206,10 +206,38 @@ h2.section-title { font-size: 1.1rem; color: var(--muted); margin: 2rem 0 1rem; 
   margin-bottom: 1.5rem;
 }
 
-.sync-section h2, .add-section h2 {
+.sync-section h2, .add-section h2, .settings-section h2 {
   font-size: 1rem;
   margin: 0 0 0.75rem;
 }
+
+.schedule-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-top: 0.75rem;
+}
+
+.schedule-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.schedule-form input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  color: var(--text);
+  min-width: 8rem;
+}
+
+.status-line { margin: 0.5rem 0; }
+.service-actions { margin-top: 0.75rem; }
 
 .run-status { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .spinner { color: var(--accent); }

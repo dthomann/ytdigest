@@ -19,7 +19,7 @@ DEFAULTS = {
     "summarize_finished_livestreams": False,
     "youtube_api_quota_daily": 10000,
     "youtube_api_quota_warn_fraction": 0.9,
-    "transcript_languages": ["de", "en"],
+    "transcript_languages": ["en"],
     "transcript_delay_seconds": [2, 5],
     "max_transcript_fetches_per_run": 40,
     "enable_whisper_fallback": False,
@@ -154,6 +154,24 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path | 
         )
 
     return Config(values=values, secrets=secrets, config_path=config_path)
+
+
+def update_config_file(config_path: Path, updates: dict) -> None:
+    """Merge updates into config.yaml and re-validate."""
+    config_path = Path(config_path)
+    with open(config_path) as f:
+        raw = yaml.safe_load(f) or {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{config_path} must contain a YAML mapping at the top level.")
+    unknown = set(updates.keys()) - set(DEFAULTS.keys())
+    if unknown:
+        raise ConfigError(f"Cannot update unknown config key(s): {sorted(unknown)}")
+    raw.update(updates)
+    merged = dict(DEFAULTS)
+    merged.update(raw)
+    _validate(merged, config_path)
+    with open(config_path, "w") as f:
+        yaml.dump(raw, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
 def _validate(values: dict, config_path: Path) -> None:

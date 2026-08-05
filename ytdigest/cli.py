@@ -16,6 +16,7 @@ from . import classify, db, deliver as deliver_mod, digest as digest_mod, discov
 from . import summarize as summarize_mod, transcript as transcript_mod
 from . import channels as channels_mod, pipeline
 from .config import Config, ConfigError, load_config
+from .backfill import META_SEED_CUTOFF, fix_stuck_backfill, validate_cutoff_date
 from .models import VideoState
 from .run_lock import RunInProgressError
 from .util import utcnow_iso
@@ -104,6 +105,12 @@ def cmd_seed(args) -> None:
     config = _load_config(args)
     conn = _connect(config)
 
+    try:
+        validate_cutoff_date(args.since)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     discover_result, _, quota_error, _ = _discover_metadata_classify(conn, config)
     if quota_error:
         print(f"Warning: {quota_error}", file=sys.stderr)
@@ -118,9 +125,13 @@ def cmd_seed(args) -> None:
         "UPDATE videos SET state = ?, updated_at = ? WHERE state = ?",
         (VideoState.DELIVERED.value, now, VideoState.LIVE_FINISHED.value),
     )
+    db.set_meta(conn, META_SEED_CUTOFF, args.since)
     conn.commit()
 
-    print(f"Seeded: {discover_result.new_videos} videos discovered, {seeded} marked delivered (backfill)")
+    print(
+        f"Seeded: {discover_result.new_videos} new, {discover_result.backfilled_videos} backfilled "
+        f"in RSS, {seeded} marked delivered (needs_transcript), cutoff={args.since}"
+    )
 
 
 def cmd_discover(args) -> None:
@@ -129,10 +140,46 @@ def cmd_discover(args) -> None:
     result = discover.discover_all(conn, config, dry_run=args.dry_run)
     print(
         f"Polled {result.channels_polled} channel(s), {result.channels_failed} failed, "
-        f"{result.new_videos} new video(s)"
+        f"{result.new_videos} new video(s), {result.backfilled_videos} backfilled"
     )
     for w in result.dead_channel_warnings:
         print(f"WARNING: {w}", file=sys.stderr)
+
+
+def cmd_fix_backfill(args) -> None:
+    """One-off: mark pre-cutoff pipeline videos as delivered and persist the seed cutoff."""
+    config = _load_config(args)
+    conn = _connect(config)
+
+    since = args.since or db.get_meta(conn, META_SEED_CUTOFF)
+    if not since:
+        print(
+            "Error: no seed cutoff in DB — pass --since YYYY-MM-DD (same date used for seed)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        validate_cutoff_date(since)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.since:
+        db.set_meta(conn, META_SEED_CUTOFF, since)
+
+    now = utcnow_iso()
+    fixed_ids = fix_stuck_backfill(conn, since, now=now)
+    if fixed_ids:
+        print(f"Fixed {len(fixed_ids)} video(s) published before {since}:")
+        for vid in fixed_ids:
+            row = conn.execute(
+                "SELECT title, published_at, state FROM videos WHERE video_id = ?", (vid,)
+            ).fetchone()
+            title = (row["title"] or vid)[:70]
+            print(f"  {vid}  {row['published_at']}  {title}")
+    else:
+        print(f"No stuck backfill videos found (cutoff={since}).")
+    print(f"Seed cutoff stored: {since}")
 
 
 def cmd_run(args) -> None:
@@ -150,11 +197,14 @@ def cmd_run(args) -> None:
         result = pipeline.run_pipeline(conn, config, limit=args.limit, channel=args.channel)
         print(
             f"Run #{result.run_id} finished status={result.status} "
-            f"discovered={result.discovered} summarized={result.summarized}"
+            f"discovered={result.discovered} summarized={result.summarized} failed={result.failed}"
         )
     except RunInProgressError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    except Exception as exc:
+        print(f"Run failed: {exc}", file=sys.stderr)
+        raise
 
 
 def cmd_fetch_transcripts(args) -> None:
@@ -165,6 +215,10 @@ def cmd_fetch_transcripts(args) -> None:
         f"Attempted {result.attempted}, succeeded {len(result.succeeded_ids)}, "
         f"failed_permanent {len(result.failed_permanent_ids)}, retrying {result.retrying}"
     )
+    if result.aborted:
+        print(f"Aborted: {result.abort_reason}", file=sys.stderr)
+    for err in result.errors:
+        print(f"  {err}", file=sys.stderr)
     if result.aborted:
         print(f"WARNING: transcript phase aborted: {result.abort_reason}", file=sys.stderr)
 
@@ -289,6 +343,11 @@ def cmd_status(args) -> None:
     conn = _connect(config)
 
     print(f"Database: {config.db_path}")
+    cutoff = db.get_meta(conn, META_SEED_CUTOFF)
+    if cutoff:
+        print(f"Seed cutoff: {cutoff} (videos published before this day are backfill)")
+    else:
+        print("Seed cutoff: not set — run `seed --since YYYY-MM-DD` or `fix-backfill --since YYYY-MM-DD`")
     print()
     print("Videos by state:")
     for row in conn.execute("SELECT state, COUNT(*) AS n FROM videos GROUP BY state ORDER BY n DESC"):
@@ -340,6 +399,56 @@ def cmd_web(args) -> None:
     )
 
 
+def cmd_services(args) -> None:
+    config = _load_config(args)
+    from . import systemd_units
+
+    action = args.services_action
+    try:
+        if action == "status":
+            snap = systemd_units.get_services_snapshot(config)
+            print(f"setup: {snap.context.setup_mode} ({snap.context.install_dir})")
+            print(f"user: {snap.context.service_user}")
+            print(f"sudo: {'yes' if snap.sudo_available else 'no'}")
+            print(f"schedule: {snap.digest_hour:02d}:00 {snap.timezone}")
+            for unit in (snap.web, snap.timer):
+                state = []
+                if unit.installed:
+                    state.append("installed")
+                if unit.enabled:
+                    state.append("enabled")
+                if unit.active:
+                    state.append("active")
+                print(f"{unit.label}: {', '.join(state) or unit.detail or 'not installed'}")
+            if snap.next_run:
+                print(f"next run: {snap.next_run}")
+            if snap.sudo_hint:
+                print(f"sudoers: {snap.sudo_hint}")
+        elif action == "install-web":
+            result = systemd_units.install_web_service(config)
+            print(result.message)
+            if result.handoff:
+                systemd_units.schedule_process_exit()
+                print("Exiting manual web process for systemd handoff…", file=sys.stderr)
+        elif action == "uninstall-web":
+            print(systemd_units.uninstall_web_service(config))
+        elif action == "install-timer":
+            print(systemd_units.install_timer_service(config))
+        elif action == "uninstall-timer":
+            print(systemd_units.uninstall_timer_service(config))
+        elif action == "set-schedule":
+            print(
+                systemd_units.update_run_schedule(
+                    config,
+                    digest_hour=args.digest_hour,
+                    timezone=args.timezone,
+                )
+            )
+    except (ConfigError, systemd_units.SystemdError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+
 def _not_implemented(stage: str):
     def handler(args):
         print(f"Not implemented yet — this command lands in {stage}.", file=sys.stderr)
@@ -373,8 +482,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_disable_channel)
 
     p = sub.add_parser("seed", help="backfill existing videos without fetching transcripts")
-    p.add_argument("--since", required=True, help="YYYY-MM-DD (recorded for operator reference)")
+    p.add_argument("--since", required=True, help="YYYY-MM-DD — catalogue before this day is backfill")
     p.set_defaults(func=cmd_seed)
+
+    p = sub.add_parser(
+        "fix-backfill",
+        help="mark stuck pre-cutoff videos as delivered (one-off after seed without cutoff, or RSS rotation)",
+    )
+    p.add_argument(
+        "--since",
+        default=None,
+        help="YYYY-MM-DD seed cutoff (required if not already stored from seed)",
+    )
+    p.set_defaults(func=cmd_fix_backfill)
 
     p = sub.add_parser(
         "run", help="run the full pipeline: discover -> metadata -> classify -> transcripts -> summarize -> deliver"
@@ -419,6 +539,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("web", help="start the web UI")
     p.set_defaults(func=cmd_web)
+
+    p = sub.add_parser("services", help="install/manage systemd units (web UI + daily timer)")
+    svc = p.add_subparsers(dest="services_action", required=True)
+    p_status = svc.add_parser("status", help="show service and timer status")
+    p_status.set_defaults(func=cmd_services)
+    p_install_web = svc.add_parser("install-web", help="install and start ytdigest-web.service")
+    p_install_web.set_defaults(func=cmd_services)
+    p_uninstall_web = svc.add_parser("uninstall-web", help="stop and remove ytdigest-web.service")
+    p_uninstall_web.set_defaults(func=cmd_services)
+    p_install_timer = svc.add_parser("install-timer", help="install and enable ytdigest.timer")
+    p_install_timer.set_defaults(func=cmd_services)
+    p_uninstall_timer = svc.add_parser("uninstall-timer", help="disable and remove ytdigest.timer")
+    p_uninstall_timer.set_defaults(func=cmd_services)
+    p_schedule = svc.add_parser("set-schedule", help="update digest_hour/timezone in config (+ timer if installed)")
+    p_schedule.add_argument("--hour", dest="digest_hour", type=int, required=True)
+    p_schedule.add_argument("--timezone", required=True)
+    p_schedule.set_defaults(func=cmd_services)
 
     return parser
 

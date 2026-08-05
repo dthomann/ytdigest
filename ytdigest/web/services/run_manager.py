@@ -47,7 +47,13 @@ class RunManager:
                 with self._lock:
                     self._state = "finished"
                     self._run_id = result.run_id
-                    self._message = f"Run #{result.run_id} finished ({result.status})"
+                    if result.notes:
+                        preview = "; ".join(result.notes[:5])
+                        if len(result.notes) > 5:
+                            preview += f" (+{len(result.notes) - 5} more)"
+                        self._message = f"Run #{result.run_id} {result.status}: {preview}"
+                    else:
+                        self._message = f"Run #{result.run_id} finished ({result.status})"
             except RunInProgressError:
                 with self._lock:
                     self._state = "error"

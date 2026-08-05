@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from xml.etree.ElementTree import ParseError as XmlParseError
 
+from urllib.parse import parse_qs, urlparse
+
 import requests
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -217,10 +219,29 @@ def _extract_info(video_id: str) -> dict:
         return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
 
 
-def _select_ytdlp_track(info: dict, languages: list[str]) -> tuple[str | None, dict | None, bool]:
-    """Returns (language_code, format_dict, is_auto) for the json3 track, manual first."""
+def _subtitle_url_is_translation(url: str | None) -> bool:
+    """True when the timedtext URL fetches a translated track (``tlang=`` param)."""
+    if not url:
+        return False
+    return bool(parse_qs(urlparse(url).query).get("tlang"))
+
+
+def _request_is_rate_limited(exc: requests.RequestException) -> bool:
+    response = getattr(exc, "response", None)
+    if response is not None and response.status_code == 429:
+        return True
+    msg = str(exc).lower()
+    return "429" in msg or "too many requests" in msg
+
+
+def _ytdlp_json3_candidates(
+    info: dict, languages: list[str]
+) -> list[tuple[str, dict, bool, bool]]:
+    """Collect json3 tracks as (listed_lang, fmt, is_auto, is_translation)."""
     manual = info.get("subtitles") or {}
     auto = info.get("automatic_captions") or {}
+    out: list[tuple[str, dict, bool, bool]] = []
+    seen_urls: set[str] = set()
 
     def find_json3(track_dict, lang):
         for fmt in track_dict.get(lang, []):
@@ -228,22 +249,42 @@ def _select_ytdlp_track(info: dict, languages: list[str]) -> tuple[str | None, d
                 return fmt
         return None
 
+    def add(lang: str, fmt: dict, is_auto: bool) -> None:
+        url = fmt.get("url")
+        if not url or url in seen_urls:
+            return
+        seen_urls.add(url)
+        out.append((lang, fmt, is_auto, _subtitle_url_is_translation(url)))
+
     for lang in languages:
         fmt = find_json3(manual, lang)
         if fmt:
-            return lang, fmt, False
+            add(lang, fmt, False)
     for lang in languages:
         fmt = find_json3(auto, lang)
         if fmt:
-            return lang, fmt, True
+            add(lang, fmt, True)
     for lang in manual:
         fmt = find_json3(manual, lang)
         if fmt:
-            return lang, fmt, False
+            add(lang, fmt, False)
     for lang in auto:
         fmt = find_json3(auto, lang)
         if fmt:
-            return lang, fmt, True
+            add(lang, fmt, True)
+    return out
+
+
+def _select_ytdlp_track(info: dict, languages: list[str]) -> tuple[str | None, dict | None, bool]:
+    """Returns (language_code, format_dict, is_auto) for the json3 track, manual first."""
+    candidates = _ytdlp_json3_candidates(info, languages)
+    for native_only in (True, False):
+        for lang, fmt, is_auto, is_translation in candidates:
+            if native_only and is_translation:
+                continue
+            if not native_only and not is_translation:
+                continue
+            return lang, fmt, is_auto
     return None, None, False
 
 
@@ -285,6 +326,8 @@ def fetch_tier2(
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
+        if _request_is_rate_limited(exc):
+            return TranscriptOutcome(ok=False, blocked=True, reason=f"tier2 blocked: {exc}")
         return TranscriptOutcome(ok=False, reason=f"tier2 download error: {exc}")
 
     segments = _parse_json3(data)
@@ -420,6 +463,7 @@ class TranscriptPhaseResult:
     retrying: int = 0
     aborted: bool = False
     abort_reason: str | None = None
+    errors: list[str] = field(default_factory=list)
 
 
 def process_video(
@@ -561,20 +605,24 @@ def run_transcript_phase(
         if outcome.blocked:
             result.aborted = True
             result.abort_reason = outcome.reason
+            result.errors.append(f"{row['video_id']}: {outcome.reason}")
             break
 
         if outcome.ok:
             result.succeeded_ids.append(row["video_id"])
         elif outcome.fatal:
             result.failed_permanent_ids.append(row["video_id"])
+            result.errors.append(f"{row['video_id']}: {outcome.reason}")
         else:
             updated = conn.execute(
                 "SELECT state FROM videos WHERE video_id = ?", (row["video_id"],)
             ).fetchone()
             if updated and updated["state"] == VideoState.FAILED_PERMANENT.value:
                 result.failed_permanent_ids.append(row["video_id"])
+                result.errors.append(f"{row['video_id']}: {outcome.reason}")
             else:
                 result.retrying += 1
+                result.errors.append(f"{row['video_id']}: {outcome.reason}")
 
         if i < len(rows) - 1:
             jittered_sleep(delay_low, delay_high)

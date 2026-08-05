@@ -5,13 +5,13 @@
 #   scripts/deploy.sh
 #
 # Override defaults via environment:
-#   YTDIGEST_PI=mypi.local          SSH host (from ~/.ssh/config)
+#   YTDIGEST_PI=example.local          SSH host (from ~/.ssh/config)
 #   YTDIGEST_REMOTE=~/ytdigest      install dir on the Pi
 #   YTDIGEST_PIP=1                    re-run pip install (only when requirements.txt changed)
 #   YTDIGEST_RESTART_WEB=0          skip systemctl restart
 set -euo pipefail
 
-PI="${YTDIGEST_PI:-mypi.local}"
+PI="${YTDIGEST_PI:-example.local}"
 REMOTE="${YTDIGEST_REMOTE:-~/ytdigest}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

@@ -11,6 +11,7 @@ from . import summarize as summarize_mod, transcript as transcript_mod
 from .config import Config
 from .models import VideoState
 from .run_lock import RunInProgressError, run_lock
+from .run_report import report_run_issues
 from .util import utcnow_iso
 
 logger = logging.getLogger("ytdigest.pipeline")
@@ -84,6 +85,8 @@ def _run_transcript_phase(conn, config, limit=None) -> tuple[list[str], list[str
     result = transcript_mod.run_transcript_phase(conn, config, limit=limit)
     if result.aborted:
         notes.append(f"transcript phase aborted: {result.abort_reason}")
+    for err in result.errors:
+        notes.append(f"transcript: {err}")
     logger.info(
         "transcript phase: attempted=%d succeeded=%d failed_permanent=%d retrying=%d aborted=%s",
         result.attempted,
@@ -260,9 +263,11 @@ def run_pipeline(
             conn.commit()
 
             if status in ("error", "partial"):
-                deliver_mod.send_alert(
+                report_run_issues(
                     config,
-                    f"run #{run_id} status={status}: {'; '.join(notes) if notes else 'see logs'}",
+                    run_id=run_id,
+                    status=status,
+                    notes=notes,
                 )
         except Exception as exc:
             logger.exception("run failed")
@@ -271,7 +276,12 @@ def run_pipeline(
                 (utcnow_iso(), str(exc), run_id),
             )
             conn.commit()
-            deliver_mod.send_alert(config, f"run #{run_id} crashed: {exc}")
+            report_run_issues(
+                config,
+                run_id=run_id,
+                status="error",
+                notes=[f"crashed: {exc}"],
+            )
             raise
 
         return RunResult(

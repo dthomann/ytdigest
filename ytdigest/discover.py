@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 import feedparser
 import requests
 
+from .backfill import META_SEED_CUTOFF, initial_state_for_discovery
+from .db import get_meta
+from .models import VideoState
 from .util import USER_AGENT, jittered_sleep, utcnow_iso
 
 logger = logging.getLogger("ytdigest")
@@ -17,10 +20,17 @@ FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 
 
 @dataclass
+class ChannelDiscoverCounts:
+    new: int = 0
+    backfilled: int = 0
+
+
+@dataclass
 class DiscoverResult:
     channels_polled: int = 0
     channels_failed: int = 0
     new_videos: int = 0
+    backfilled_videos: int = 0
     dead_channel_warnings: list[str] = field(default_factory=list)
 
 
@@ -61,14 +71,21 @@ def parse_feed(raw_xml: str) -> list[dict]:
 
 
 def discover_channel(
-    conn: sqlite3.Connection, channel_id: str, fetch_fn=default_fetch, dry_run: bool = False
-) -> int:
-    """Poll one channel's feed, insert unseen videos. Returns count of new videos."""
+    conn: sqlite3.Connection,
+    channel_id: str,
+    fetch_fn=default_fetch,
+    dry_run: bool = False,
+    seed_cutoff: str | None = None,
+) -> ChannelDiscoverCounts:
+    """Poll one channel's feed, insert unseen videos. Returns new vs backfilled counts."""
+    if seed_cutoff is None:
+        seed_cutoff = get_meta(conn, META_SEED_CUTOFF)
+
     url = FEED_URL.format(channel_id=channel_id)
     raw = fetch_fn(url)
     entries = parse_feed(raw)
 
-    new_count = 0
+    counts = ChannelDiscoverCounts()
     now = utcnow_iso()
     for entry in entries:
         if entry["channel_id"] != channel_id:
@@ -77,19 +94,33 @@ def discover_channel(
         if dry_run:
             cur = conn.execute("SELECT 1 FROM videos WHERE video_id = ?", (entry["video_id"],))
             if cur.fetchone() is None:
-                new_count += 1
+                if initial_state_for_discovery(entry["published_at"], seed_cutoff) == VideoState.DELIVERED.value:
+                    counts.backfilled += 1
+                else:
+                    counts.new += 1
             continue
+
+        state = initial_state_for_discovery(entry["published_at"], seed_cutoff)
         cur = conn.execute(
             """
             INSERT OR IGNORE INTO videos
                 (video_id, channel_id, title, published_at, state, discovered_at, updated_at)
-            VALUES (?, ?, ?, ?, 'discovered', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (entry["video_id"], channel_id, entry["title"], entry["published_at"], now, now),
+            (entry["video_id"], channel_id, entry["title"], entry["published_at"], state, now, now),
         )
         if cur.rowcount:
-            new_count += 1
-    return new_count
+            if state == VideoState.DELIVERED.value:
+                counts.backfilled += 1
+                logger.info(
+                    "backfilled %s (published %s before seed cutoff %s)",
+                    entry["video_id"],
+                    entry["published_at"],
+                    seed_cutoff,
+                )
+            else:
+                counts.new += 1
+    return counts
 
 
 def discover_all(
@@ -110,8 +141,9 @@ def discover_all(
         result.channels_polled += 1
         now = utcnow_iso()
         try:
-            new_count = discover_channel(conn, ch["channel_id"], fetch_fn=fetch_fn, dry_run=dry_run)
-            result.new_videos += new_count
+            channel_counts = discover_channel(conn, ch["channel_id"], fetch_fn=fetch_fn, dry_run=dry_run)
+            result.new_videos += channel_counts.new
+            result.backfilled_videos += channel_counts.backfilled
             if not dry_run:
                 conn.execute(
                     """

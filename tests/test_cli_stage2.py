@@ -247,7 +247,7 @@ EMPTY_FEED_XML = (
 )
 
 
-def test_run_sends_alert_on_quota_exceeded(tmp_path, monkeypatch):
+def test_run_sends_alert_on_quota_exceeded(tmp_path, monkeypatch, capsys):
     class EmptyFeedResponse:
         text = EMPTY_FEED_XML
 
@@ -259,9 +259,6 @@ def test_run_sends_alert_on_quota_exceeded(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("ytdigest.cli.transcript_mod.run_transcript_phase", fake_transcript_phase)
     monkeypatch.setattr("ytdigest.cli.summarize_mod.run_summarize_phase", fake_summarize_phase)
-
-    alerts = []
-    monkeypatch.setattr("ytdigest.cli.deliver_mod.send_alert", lambda config, msg: alerts.append(msg))
 
     config_path = write_config(tmp_path)
     # No YOUTUBE_API_KEY -> metadata fetch is skipped with a quota_error-style note -> status partial
@@ -275,5 +272,5 @@ def test_run_sends_alert_on_quota_exceeded(tmp_path, monkeypatch):
     args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout")
     cli.cmd_run(args)
 
-    assert len(alerts) == 1
-    assert "status=partial" in alerts[0]
+    err = capsys.readouterr().err
+    assert "status=partial" in err

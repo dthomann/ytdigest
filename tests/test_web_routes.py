@@ -39,3 +39,19 @@ def test_run_status_poll(config):
     resp = client.get("/runs/status")
     assert resp.status_code == 200
     assert "Run now" in resp.text or "Running" in resp.text
+
+
+def test_settings_page_loads(config, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("digest_hour: 6\ntimezone: Europe/Zurich\n")
+    (tmp_path / "venv" / "bin").mkdir(parents=True)
+    (tmp_path / "venv" / "bin" / "ytdigest").write_text("#!/bin/sh\n")
+    config.config_path = config_path
+    db.init_db(config.db_path)
+    app = create_app(config)
+    client = TestClient(app)
+    resp = client.get("/settings")
+    assert resp.status_code == 200
+    assert "Settings" in resp.text
+    assert "Daily run schedule" in resp.text
+    assert "Web service" in resp.text

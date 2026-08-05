@@ -1,0 +1,8 @@
+# Passwordless sudo for ytdigest service management from the web UI.
+# Copy to /etc/sudoers.d/ytdigest and adjust paths/user for your setup.
+#
+# Dedicated user (/opt/ytdigest):
+# ytdigest ALL=(root) NOPASSWD: /opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml services *
+#
+# Home setup (example for user pi):
+# pi ALL=(root) NOPASSWD: /home/pi/ytdigest/venv/bin/ytdigest --config /home/pi/ytdigest/config.yaml services *

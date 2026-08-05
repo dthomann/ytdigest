@@ -19,11 +19,27 @@ def test_parse_feed_extracts_entries():
 def test_discover_channel_inserts_unseen_videos(conn):
     insert_channel(conn, "UCnormal0000000000000000")
     fetch = lambda url: load_fixture_text("rss_normal_channel.xml")
-    new_count = discover_channel(conn, "UCnormal0000000000000000", fetch_fn=fetch)
-    assert new_count == 2
+    counts = discover_channel(conn, "UCnormal0000000000000000", fetch_fn=fetch)
+    assert counts.new == 2
+    assert counts.backfilled == 0
     rows = conn.execute("SELECT * FROM videos").fetchall()
     assert len(rows) == 2
     assert all(r["state"] == VideoState.DISCOVERED.value for r in rows)
+
+
+def test_discover_channel_backfills_pre_cutoff_videos(conn):
+    from ytdigest.db import set_meta
+    from ytdigest.backfill import META_SEED_CUTOFF
+
+    insert_channel(conn, "UCnormal0000000000000000")
+    set_meta(conn, META_SEED_CUTOFF, "2026-08-06")
+    fetch = lambda url: load_fixture_text("rss_normal_channel.xml")
+    counts = discover_channel(conn, "UCnormal0000000000000000", fetch_fn=fetch)
+    assert counts.new == 0
+    assert counts.backfilled == 2
+    rows = conn.execute("SELECT * FROM videos").fetchall()
+    assert len(rows) == 2
+    assert all(r["state"] == VideoState.DELIVERED.value for r in rows)
 
 
 def test_reappearing_rss_entries_produce_zero_new_rows(conn):
@@ -32,8 +48,9 @@ def test_reappearing_rss_entries_produce_zero_new_rows(conn):
     discover_channel(conn, "UCnormal0000000000000000", fetch_fn=fetch)
     conn.commit()
     # feed re-polled, same entries reappear (feeds reorder / republish on edit)
-    new_count = discover_channel(conn, "UCnormal0000000000000000", fetch_fn=fetch)
-    assert new_count == 0
+    counts = discover_channel(conn, "UCnormal0000000000000000", fetch_fn=fetch)
+    assert counts.new == 0
+    assert counts.backfilled == 0
     rows = conn.execute("SELECT * FROM videos").fetchall()
     assert len(rows) == 2
 

@@ -77,10 +77,21 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
     expires_at      TEXT,
     updated_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS meta (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL
+);
 """
 
 MIGRATIONS = [
     "ALTER TABLE channels ADD COLUMN source TEXT",
+    """
+    CREATE TABLE IF NOT EXISTS meta (
+        key     TEXT PRIMARY KEY,
+        value   TEXT NOT NULL
+    )
+    """,
 ]
 
 
@@ -93,6 +104,19 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+    conn.commit()
 
 
 def migrate(conn: sqlite3.Connection) -> None:

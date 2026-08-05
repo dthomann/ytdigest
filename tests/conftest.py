@@ -70,7 +70,7 @@ def config(tmp_path):
             "summarize_finished_livestreams": False,
             "youtube_api_quota_daily": 10000,
             "youtube_api_quota_warn_fraction": 0.9,
-            "transcript_languages": ["de", "en"],
+            "transcript_languages": ["en"],
             "transcript_delay_seconds": [0, 0],
             "max_transcript_fetches_per_run": 40,
             "enable_whisper_fallback": False,

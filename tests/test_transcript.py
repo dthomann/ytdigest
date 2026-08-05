@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 
 import pytest
+import requests
 from youtube_transcript_api import (
     AgeRestricted,
     IpBlocked,
@@ -242,6 +243,41 @@ def test_tier2_no_json3_track_is_retryable():
     assert not outcome.ok
     assert not outcome.fatal
     assert not outcome.blocked
+
+
+def test_tier2_prefers_native_en_over_translated_de():
+    info = {
+        "subtitles": {},
+        "automatic_captions": {
+            "de": [{"ext": "json3", "url": "http://example/?lang=en&tlang=de&fmt=json3"}],
+            "en": [{"ext": "json3", "url": "http://example/?lang=en&fmt=json3"}],
+        },
+    }
+    lang, fmt, is_auto = tr._select_ytdlp_track(info, ["de", "en"])
+    assert lang == "en"
+    assert "tlang=" not in fmt["url"]
+    assert is_auto is True
+
+
+def test_tier2_download_429_is_blocked():
+    info = {
+        "automatic_captions": {
+            "en": [{"ext": "json3", "url": "http://example/en.json3"}],
+        },
+    }
+
+    def fake_fetch(url):
+        response = type("Resp", (), {"status_code": 429})()
+        raise requests.HTTPError("429 Client Error", response=response)
+
+    outcome = tr.fetch_tier2("vid", ["en"], extract_info_fn=lambda vid: info, fetch_fn=fake_fetch)
+    assert outcome.blocked
+    assert "tier2 blocked" in outcome.reason
+
+
+def test_subtitle_url_is_translation():
+    assert tr._subtitle_url_is_translation("http://x/?lang=en&tlang=de") is True
+    assert tr._subtitle_url_is_translation("http://x/?lang=en") is False
 
 
 # --------------------------------------------------------------------------------------
