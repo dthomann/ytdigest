@@ -19,6 +19,8 @@ _ENV_KEYS = (
     "GROQ_API_KEY",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_CHAT_ID",
+    "YOUTUBE_OAUTH_CLIENT_ID",
+    "YOUTUBE_OAUTH_CLIENT_SECRET",
 )
 
 
@@ -82,6 +84,9 @@ def config(tmp_path):
             "max_input_chars": 400000,
             "delivery_channel": "stdout",
             "telegram_message_delay_seconds": 0,
+            "web_host": "127.0.0.1",
+            "web_port": 8080,
+            "web_public_url": None,
         },
         secrets={
             "YOUTUBE_API_KEY": "test-key",
@@ -89,6 +94,8 @@ def config(tmp_path):
             "GROQ_API_KEY": "",
             "TELEGRAM_BOT_TOKEN": "",
             "TELEGRAM_ALLOWED_CHAT_ID": "",
+            "YOUTUBE_OAUTH_CLIENT_ID": "",
+            "YOUTUBE_OAUTH_CLIENT_SECRET": "",
         },
         config_path=None,
     )

@@ -1,0 +1,16 @@
+[Unit]
+Description=ytdigest web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ytdigest
+WorkingDirectory=/opt/ytdigest
+EnvironmentFile=/opt/ytdigest/.env
+ExecStart=/opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml web
+MemoryMax=150M
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

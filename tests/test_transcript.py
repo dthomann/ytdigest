@@ -76,12 +76,16 @@ def test_write_transcript_files(tmp_path):
 
 
 class FakeTranscript:
-    def __init__(self, language_code, is_generated, snippets):
+    def __init__(self, language_code, is_generated, snippets, fetch_exc=None):
         self.language_code = language_code
         self.is_generated = is_generated
         self._snippets = snippets
+        self._fetch_exc = fetch_exc
 
     def fetch(self):
+        if self._fetch_exc:
+            raise self._fetch_exc
+
         class Fetched:
             def __init__(self, snippets):
                 self.snippets = snippets
@@ -192,6 +196,18 @@ def test_tier1_request_blocked_is_blocked():
     assert outcome.blocked
 
 
+def test_tier1_invalid_xml_on_fetch_is_retryable():
+    from xml.etree.ElementTree import ParseError
+
+    manual = FakeTranscript("en", False, [], fetch_exc=ParseError("no element found: line 1, column 0"))
+    api = FakeYttApi(list_result=FakeTranscriptList(manual=manual))
+    outcome = tr.fetch_tier1("vid", ["en"], ytt_api=api)
+    assert not outcome.ok
+    assert not outcome.fatal
+    assert not outcome.blocked
+    assert "invalid transcript XML" in outcome.reason
+
+
 # --------------------------------------------------------------------------------------
 # Tier 2
 # --------------------------------------------------------------------------------------
@@ -282,6 +298,21 @@ def test_process_video_success_writes_files_and_state(conn, config, tmp_path):
     assert row["state"] == VideoState.HAS_TRANSCRIPT.value
     assert row["transcript_source"] == "captions_api"
     assert (config.transcripts_dir / "UC1" / "v1.txt").exists()
+
+
+def test_process_video_success_clears_retry_fields(conn, config, tmp_path):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1", attempts=2, next_retry_at="2026-01-01T12:00:00+00:00")
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    tr.process_video(
+        conn, row, config,
+        tier1_fn=lambda vid, langs: make_success_outcome(),
+    )
+    updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    assert updated["state"] == VideoState.HAS_TRANSCRIPT.value
+    assert updated["attempts"] == 0
+    assert updated["next_retry_at"] is None
+    assert updated["last_error"] is None
 
 
 def test_process_video_fatal_video_missing_skips_tier2(conn, config):

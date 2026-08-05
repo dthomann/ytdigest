@@ -1,0 +1,20 @@
+<div class="run-status run-status--{{ run_state }}">
+  {% if run_state == "idle" %}
+  <form hx-post="/runs/start" hx-target="#run-status" hx-swap="innerHTML">
+    <button type="submit" class="btn btn-primary">Run now</button>
+  </form>
+  {% elif run_state == "running" %}
+  <span class="spinner">Running pipeline…</span>
+  {% elif run_state == "finished" %}
+  <span class="success">{{ run_message or "Run completed" }}</span>
+  <form hx-post="/runs/reset" hx-target="#run-status" hx-swap="innerHTML" class="inline">
+    <button type="submit" class="btn btn-sm">Dismiss</button>
+  </form>
+  <a href="/" class="link">Refresh digest</a>
+  {% elif run_state == "error" %}
+  <span class="error">{{ run_message or "Run failed" }}</span>
+  <form hx-post="/runs/reset" hx-target="#run-status" hx-swap="innerHTML" class="inline">
+    <button type="submit" class="btn btn-sm">Dismiss</button>
+  </form>
+  {% endif %}
+</div>

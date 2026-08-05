@@ -33,6 +33,9 @@ DEFAULTS = {
     "max_input_chars": 400000,
     "delivery_channel": "stdout",
     "telegram_message_delay_seconds": 1,
+    "web_host": "0.0.0.0",
+    "web_port": 8080,
+    "web_public_url": None,
 }
 
 # Secrets that must come from environment / .env, never from config.yaml.
@@ -138,6 +141,8 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path | 
         "GROQ_API_KEY": os.environ.get("GROQ_API_KEY", ""),
         "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         "TELEGRAM_ALLOWED_CHAT_ID": os.environ.get("TELEGRAM_ALLOWED_CHAT_ID", ""),
+        "YOUTUBE_OAUTH_CLIENT_ID": os.environ.get("YOUTUBE_OAUTH_CLIENT_ID", ""),
+        "YOUTUBE_OAUTH_CLIENT_SECRET": os.environ.get("YOUTUBE_OAUTH_CLIENT_SECRET", ""),
     }
 
     channel = values["delivery_channel"]
@@ -191,3 +196,10 @@ def _validate(values: dict, config_path: Path) -> None:
         and transcript_delay[0] <= transcript_delay[1]
     ):
         raise ConfigError(f"{config_path}: transcript_delay_seconds must be [min, max] with min <= max")
+
+    require_type("web_port", int)
+    if not (1 <= values["web_port"] <= 65535):
+        raise ConfigError(f"{config_path}: web_port must be 1-65535")
+
+    if values["web_public_url"] is not None and not isinstance(values["web_public_url"], str):
+        raise ConfigError(f"{config_path}: web_public_url must be a string or null")

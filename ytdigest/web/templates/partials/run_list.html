@@ -1,0 +1,8 @@
+{% for run in runs %}
+<li>
+  <a href="/runs/{{ run.id }}">
+    Run #{{ run.id }} · {{ run.started_at[:10] }}
+    · {{ run.summarized }} videos · {{ run.status }}
+  </a>
+</li>
+{% endfor %}

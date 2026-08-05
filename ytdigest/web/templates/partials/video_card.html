@@ -1,0 +1,17 @@
+<article class="video-card">
+  <a href="https://youtu.be/{{ video.video_id }}" target="_blank" rel="noopener">
+    <img src="https://i.ytimg.com/vi/{{ video.video_id }}/mqdefault.jpg"
+         alt="" class="thumb" loading="lazy">
+  </a>
+  <div class="video-body">
+    <h3><a href="https://youtu.be/{{ video.video_id }}" target="_blank" rel="noopener">{{ video.title or video.video_id }}</a></h3>
+    <p class="meta">{{ video.channel_title }}{% if video.published_at %} · {{ video.published_at[:10] }}{% endif %}</p>
+    {% if video.summary %}
+    <p class="summary">{{ video.summary }}</p>
+    {% elif video.last_error %}
+    <p class="error">{{ video.last_error }}</p>
+    {% elif video.scheduled_start %}
+    <p class="meta">Starts {{ video.scheduled_start[:16] }}</p>
+    {% endif %}
+  </div>
+</article>

@@ -84,6 +84,8 @@ chat ID: message your bot once (a bot can't message you first), then
 | `retry <video_id> \| --all-failed` | 2 | Reset `failed_permanent` video(s) back to `needs_transcript` |
 | `export <video_id> [--format txt\|md]` | 2 | Print a video's transcript, with summary/metadata in `md` mode |
 | `status` | 1 | Counts by state, last run, pending retries, channel errors |
+| `web` | — | Start the LAN web UI (digest browser, channels, sync, run now) |
+| `enable-channel`, `disable-channel` | 1 | Toggle a channel on/off |
 | `ask`, `bot` | 3 | Not yet implemented |
 
 ## Configuration reference (`config.yaml`)
@@ -117,11 +119,14 @@ Secrets never go here — see `.env.example`. Unknown keys and any key that look
 | `max_input_chars` | `400000` | Above this, map-reduce chunking kicks in instead of a single call. |
 | `delivery_channel` | `stdout` | `telegram` \| `stdout` \| `file`. `stdout` is the development default; switch to `telegram` once `.env` has bot credentials. |
 | `telegram_message_delay_seconds` | `1` | Per-chat rate limit between digest messages. |
+| `web_host` | `0.0.0.0` | Web UI bind address. Use `0.0.0.0` for LAN access; browse via `http://<pi-lan-ip>:8080`. |
+| `web_port` | `8080` | Web UI port. |
+| `web_public_url` | `null` | Optional full URL (e.g. `http://192.168.1.42:8080`) for stable YouTube OAuth redirect URI. |
 
 ## Secrets (`.env`, chmod 600)
 
 `YOUTUBE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_ALLOWED_CHAT_ID` — see `.env.example`. `YOUTUBE_API_KEY` is required for metadata lookups
+`TELEGRAM_ALLOWED_CHAT_ID`, `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET` — see `.env.example`. `YOUTUBE_API_KEY` is required for metadata lookups
 (and for resolving @handles). `GEMINI_API_KEY` is required to summarize — without it, `run` and
 `summarize` skip that phase, log a note, and the video stays queued at `has_transcript` for next
 time. `GROQ_API_KEY` is only needed if `enable_whisper_fallback: true`. `delivery_channel: telegram`

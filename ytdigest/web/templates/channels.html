@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Channels — ytdigest{% endblock %}
+{% block content %}
+<h1>Channels</h1>
+
+<section class="sync-section">
+  <h2>YouTube sync</h2>
+
+  {% if not oauth_configured %}
+  <div class="setup-notice">
+    <p>One-time setup: add OAuth credentials to <code>.env</code>, restart the server, then use the button below.</p>
+    <details open>
+      <summary>Google Cloud Console steps</summary>
+      <ol class="setup-steps">
+        <li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Credentials</a> (same project as your YouTube API key)</li>
+        <li>Configure the <strong>OAuth consent screen</strong> if prompted (External, add your email as test user)</li>
+        <li>Create <strong>OAuth client ID → Web application</strong></li>
+        <li>Add authorized redirect URI: <code>http://{{ request.headers.host }}/auth/youtube/callback</code></li>
+        <li>Add to <code>.env</code> and restart <code>ytdigest web</code>:
+          <pre>YOUTUBE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+YOUTUBE_OAUTH_CLIENT_SECRET=your-client-secret</pre>
+        </li>
+      </ol>
+    </details>
+  </div>
+  {% elif oauth_error %}
+  <p class="error">YouTube connection failed{% if oauth_error != 'sync_failed' %}: {{ oauth_error }}{% else %} during sync{% endif %}.</p>
+  {% endif %}
+
+  {% if sync_flash %}
+    {% include "partials/sync_results.html" %}
+  {% endif %}
+
+  {% if oauth_configured %}
+    {% if youtube_connected %}
+    <p class="success">Connected to YouTube</p>
+    {% endif %}
+    <a href="/channels/youtube-sync" class="btn btn-primary">
+      {% if youtube_connected %}Sync with YouTube{% else %}Connect &amp; sync with YouTube{% endif %}
+    </a>
+    <p class="meta">Opens Google sign-in if needed, then imports your subscriptions (sync-down only).</p>
+  {% else %}
+    <button class="btn btn-primary" disabled title="Add OAuth credentials to .env first">Connect &amp; sync with YouTube</button>
+  {% endif %}
+</section>
+
+<section class="add-section">
+  <h2>Add channel manually</h2>
+  <form method="post" action="/channels/add" class="form-inline">
+    <input type="text" name="channel_input" placeholder="@handle or URL or UC…" required>
+    <button type="submit" class="btn">Add</button>
+  </form>
+</section>
+
+<table class="channel-table">
+  <thead>
+    <tr>
+      <th>Channel</th>
+      <th>Source</th>
+      <th>Enabled</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for ch in channels %}
+    <tr>
+      <td>
+        <strong>{{ ch.title or ch.channel_id }}</strong>
+        {% if ch.handle %}<span class="meta">{{ ch.handle }}</span>{% endif %}
+        {% if ch.consecutive_errors %}<span class="error">{{ ch.consecutive_errors }} errors</span>{% endif %}
+      </td>
+      <td><span class="badge">{{ ch.source or "legacy" }}</span></td>
+      <td>
+        <form method="post" action="/channels/{{ ch.channel_id }}/toggle">
+          <input type="hidden" name="enabled" value="{{ 'false' if ch.enabled else 'true' }}">
+          <button type="submit" class="toggle {{ 'on' if ch.enabled else 'off' }}">
+            {{ "On" if ch.enabled else "Off" }}
+          </button>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="/channels/{{ ch.channel_id }}/remove"
+              onsubmit="return confirm('Remove this channel?')">
+          <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="meta">{{ channels|length }} channel(s) · {{ channels|selectattr('enabled')|list|length }} enabled</p>
+{% endblock %}

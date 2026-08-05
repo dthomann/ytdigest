@@ -62,7 +62,26 @@ CREATE TABLE IF NOT EXISTS deliveries (
     run_id       INTEGER REFERENCES runs(id),
     sent_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS run_videos (
+    run_id       INTEGER NOT NULL REFERENCES runs(id),
+    video_id     TEXT NOT NULL REFERENCES videos(video_id),
+    section      TEXT NOT NULL,
+    PRIMARY KEY (run_id, video_id)
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    provider        TEXT PRIMARY KEY,
+    refresh_token   TEXT,
+    access_token    TEXT,
+    expires_at      TEXT,
+    updated_at      TEXT NOT NULL
+);
 """
+
+MIGRATIONS = [
+    "ALTER TABLE channels ADD COLUMN source TEXT",
+]
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -76,10 +95,21 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def migrate(conn: sqlite3.Connection) -> None:
+    """Apply incremental schema migrations (idempotent)."""
+    for sql in MIGRATIONS:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+    conn.commit()
+
+
 def init_db(db_path: str | Path) -> sqlite3.Connection:
     conn = connect(db_path)
     conn.executescript(SCHEMA)
-    conn.commit()
+    migrate(conn)
     return conn
 
 

@@ -39,3 +39,8 @@ max_input_chars: 400000
 # --- delivery (stage 2) ---
 delivery_channel: stdout          # telegram | stdout | file
 telegram_message_delay_seconds: 1
+
+# --- web UI ---
+web_host: 0.0.0.0                  # bind address — accepts LAN connections on any interface
+web_port: 8080
+web_public_url: null               # optional: http://192.168.x.x:8080 for stable OAuth redirect URI

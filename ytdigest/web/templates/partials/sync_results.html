@@ -1,0 +1,61 @@
+{% if sync_flash and sync_flash.error %}
+<p class="error">{{ sync_flash.error }}</p>
+{% elif sync_flash %}
+{% if sync_flash.connected %}
+<p class="success">Connected to YouTube.</p>
+{% endif %}
+{% if sync_flash.added_count %}
+<p class="success">Added {{ sync_flash.added_count }} new channel(s): {{ sync_flash.added_titles|join(', ') }}.</p>
+{% elif sync_flash.connected %}
+<p class="meta">Your subscriptions are already up to date.</p>
+{% endif %}
+{% if sync_flash.suggested_removals %}
+<form method="post" action="/channels/sync/remove">
+  <p>These enabled channels are no longer in your YouTube subscriptions:</p>
+  <ul>
+    {% for ch in sync_flash.suggested_removals %}
+    <li>
+      <label>
+        <input type="checkbox" name="remove_ids" value="{{ ch.channel_id }}">
+        {{ ch.title }}
+      </label>
+    </li>
+    {% endfor %}
+  </ul>
+  <button type="submit" class="btn btn-danger">Remove selected</button>
+</form>
+{% endif %}
+{% if sync_flash.unchanged_disabled_count %}
+<p class="meta">{{ sync_flash.unchanged_disabled_count }} disabled channel(s) left unchanged.</p>
+{% endif %}
+{% else %}
+{% if error %}
+<p class="error">{{ error }}</p>
+{% else %}
+{% if added_count is defined and added_count %}
+<p class="success">Added {{ added_count }} new channel(s) from YouTube.</p>
+{% endif %}
+{% if removed_count is defined %}
+<p class="success">{{ message or ("Removed " ~ removed_count ~ " channel(s)") }}</p>
+{% endif %}
+{% if suggested_removals %}
+<form hx-post="/channels/sync/remove" hx-target="#sync-results" hx-swap="innerHTML">
+  <p>These enabled channels are no longer in your YouTube subscriptions:</p>
+  <ul>
+    {% for ch in suggested_removals %}
+    <li>
+      <label>
+        <input type="checkbox" name="remove_ids" value="{{ ch.channel_id }}">
+        {{ ch.title or ch.channel_id }}
+      </label>
+    </li>
+    {% endfor %}
+  </ul>
+  <button type="submit" class="btn btn-danger">Remove selected</button>
+</form>
+{% endif %}
+{% if unchanged_disabled %}
+<p class="meta">{{ unchanged_disabled|length }} disabled channel(s) left unchanged.</p>
+{% endif %}
+{% endif %}
+{% endif %}

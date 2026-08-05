@@ -18,6 +18,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from xml.etree.ElementTree import ParseError as XmlParseError
 
 import requests
 import yt_dlp
@@ -184,6 +185,8 @@ def fetch_tier1(video_id: str, languages: list[str], ytt_api=None) -> Transcript
         return TranscriptOutcome(ok=False, blocked=True, reason="request blocked / rate limited (tier1)")
     except CouldNotRetrieveTranscript as exc:
         return TranscriptOutcome(ok=False, reason=f"tier1 fetch error: {exc}")
+    except XmlParseError as exc:
+        return TranscriptOutcome(ok=False, reason=f"tier1 fetch error: invalid transcript XML ({exc})")
 
     segments = [{"text": s.text, "start": s.start} for s in fetched.snippets]
     return TranscriptOutcome(
@@ -208,6 +211,7 @@ def _extract_info(video_id: str) -> dict:
         "writesubtitles": False,
         "writeautomaticsub": False,
         "socket_timeout": 20,
+        "ignore_no_formats_error": True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
@@ -460,7 +464,8 @@ def process_video(
             """
             UPDATE videos
             SET state = ?, transcript_source = ?, transcript_lang = ?, transcript_auto = ?,
-                transcript_chars = ?, last_error = NULL, updated_at = ?
+                transcript_chars = ?, attempts = 0, next_retry_at = NULL,
+                last_error = NULL, updated_at = ?
             WHERE video_id = ?
             """,
             (

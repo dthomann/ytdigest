@@ -1,8 +1,10 @@
 # Manual Setup — things Claude Code cannot do for you
 
 Everything here is yours to do: accounts, keys, hardware decisions, and the handful of commands that
-touch the Pi's system state. Steps 1–7 should be done **before** Claude Code starts, because the spec
-assumes these values exist. Steps 8–13 come after Stage 1 is built.
+touch the Pi's system state. Steps 1–2 and 4–10 should be done **before** Claude Code starts, because
+the spec assumes these values exist. Steps 11–15 come after Stage 1 is built.
+
+Throughout this doc, `$YTDIGEST_HOME` is wherever you installed the app (see step 3).
 
 ---
 
@@ -30,17 +32,53 @@ concern is write wear, not capacity.
 - **Better:** plug in any spare USB stick or SSD, format ext4, mount at `/mnt/ytdata`, add to
   `/etc/fstab` with `noatime`. Point the tool's `data_dir` there.
 
-Either way, step 12 (backups) is not optional. SD cards fail without warning and you would lose the
+Either way, step 15 (backups) is not optional. SD cards fail without warning and you would lose the
 transcript archive, not just the state.
 
-### 3. Create a dedicated system user
+### 3. Install location
+
+Pick one approach. **Home setup** is the default for a single-user Pi — simpler deploy, no extra
+accounts. **Dedicated user** is optional if you want process isolation from your login.
+
+| | Home setup (recommended) | Dedicated user (optional) |
+|---|---|---|
+| Install dir (`$YTDIGEST_HOME`) | `~/ytdigest` | `/opt/ytdigest` |
+| Run as | your SSH user (`pi`, etc.) | `ytdigest` system user |
+| Deploy from Mac | `rsync` straight into `~/ytdigest` | rsync to `/tmp`, then `sudo cp` + `chown` |
+
+**Home setup** — on the Pi:
 
 ```bash
-sudo useradd -r -m -d /opt/ytdigest -s /usr/sbin/nologin ytdigest
-sudo mkdir -p /opt/ytdigest && sudo chown ytdigest:ytdigest /opt/ytdigest
+export YTDIGEST_HOME=~/ytdigest
+mkdir -p "$YTDIGEST_HOME"
+# copy or clone the repo into $YTDIGEST_HOME (see step 11 for rsync from your Mac)
+python3 -m venv "$YTDIGEST_HOME/venv"
+"$YTDIGEST_HOME/venv/bin/pip" install -r "$YTDIGEST_HOME/requirements.txt"
+cp "$YTDIGEST_HOME/config.example.yaml" "$YTDIGEST_HOME/config.yaml"   # edit as needed
 ```
 
-Keeps the job away from your personal account and lets systemd's `MemoryMax` apply cleanly.
+**Dedicated user** — only if you want isolation:
+
+```bash
+export YTDIGEST_HOME=/opt/ytdigest
+sudo useradd -r -m -d "$YTDIGEST_HOME" -s /usr/sbin/nologin ytdigest
+sudo mkdir -p "$YTDIGEST_HOME" && sudo chown ytdigest:ytdigest "$YTDIGEST_HOME"
+# deploy code into $YTDIGEST_HOME, then:
+sudo -u ytdigest python3 -m venv "$YTDIGEST_HOME/venv"
+sudo -u ytdigest "$YTDIGEST_HOME/venv/bin/pip" install -r "$YTDIGEST_HOME/requirements.txt"
+sudo -u ytdigest cp "$YTDIGEST_HOME/config.example.yaml" "$YTDIGEST_HOME/config.yaml"
+```
+
+The shipped systemd units assume `/opt/ytdigest` and `User=ytdigest`. For home setup, patch them
+after copying to `/etc/systemd/system/` (step 13):
+
+```bash
+# replace pi with your SSH username if different
+PI_USER=pi
+YTDIGEST_HOME=/home/$PI_USER/ytdigest
+sudo sed -i "s|User=ytdigest|User=$PI_USER|; s|/opt/ytdigest|$YTDIGEST_HOME|g" \
+  /etc/systemd/system/ytdigest*.service
+```
 
 ### 4. YouTube Data API key
 
@@ -96,6 +134,21 @@ decide which ones you actually want a daily paragraph from.
 
 ### 9. Put the secrets in place
 
+**Home setup:**
+
+```bash
+tee ~/ytdigest/.env >/dev/null <<'EOF'
+YOUTUBE_API_KEY=...
+GEMINI_API_KEY=...
+GROQ_API_KEY=...
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_ALLOWED_CHAT_ID=...
+EOF
+chmod 600 ~/ytdigest/.env
+```
+
+**Dedicated user:**
+
 ```bash
 sudo -u ytdigest tee /opt/ytdigest/.env >/dev/null <<'EOF'
 YOUTUBE_API_KEY=...
@@ -108,7 +161,8 @@ sudo chmod 600 /opt/ytdigest/.env
 sudo chown ytdigest:ytdigest /opt/ytdigest/.env
 ```
 
-Confirm `.env` is in `.gitignore` before the first commit.
+Confirm `.env` is in `.gitignore` before the first commit. Do not rsync your local `.env` to the Pi —
+create it on the Pi directly so secrets stay on the machine that runs the job.
 
 ### 10. Pi-hole sanity check
 
@@ -130,13 +184,76 @@ your DNS blocking yourself.
 
 ## After Stage 1 is built
 
-### 11. Seed before you ever run for real
+### 11. Deploy code from your Mac
+
+For routine updates after the first deploy, run from the repo:
 
 ```bash
-sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest init-db
-sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest import-channels subscriptions.csv
-sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest seed --since $(date -I)
-sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest status
+scripts/deploy.sh
+```
+
+Defaults to `YTDIGEST_PI=mypi.local` and `~/ytdigest` on the Pi. Skips `venv/`, `data/`, `.env`, and
+`config.yaml`. Restarts `ytdigest-web` when done. Set `YTDIGEST_PIP=1` if `requirements.txt` changed.
+
+Manual rsync (same thing the script does):
+
+**Home setup:**
+
+```bash
+PI=mypi.local   # or pi@192.168.1.42
+
+rsync -avz \
+  --exclude 'venv/' --exclude 'data/' --exclude '.env' --exclude 'config.yaml' \
+  --exclude '.git/' --exclude '__pycache__/' --exclude '.pytest_cache/' \
+  --exclude '.DS_Store' \
+  ./ "$PI:~/ytdigest/"
+```
+
+**Dedicated user:**
+
+```bash
+PI=pi@192.168.1.42
+
+rsync -avz \
+  --exclude 'venv/' --exclude 'data/' --exclude '.env' --exclude 'config.yaml' \
+  --exclude '.git/' --exclude '__pycache__/' --exclude '.pytest_cache/' \
+  --exclude '.DS_Store' \
+  ./ "$PI:/tmp/ytdigest-deploy/"
+
+ssh "$PI" 'sudo rsync -a /tmp/ytdigest-deploy/ /opt/ytdigest/ \
+  && sudo chown -R ytdigest:ytdigest /opt/ytdigest'
+```
+
+Re-run `pip install -r requirements.txt` only when dependencies change. The package is installed
+editable (`-e .`), so Python code updates take effect without reinstall.
+
+After deploying, restart the web service if you use it:
+
+```bash
+ssh "$PI" 'sudo systemctl restart ytdigest-web'
+```
+
+The daily timer picks up code changes on its next run; trigger manually with
+`sudo systemctl start ytdigest.service`.
+
+### 12. Seed before you ever run for real
+
+**Home setup:**
+
+```bash
+~/ytdigest/venv/bin/ytdigest --config ~/ytdigest/config.yaml init-db
+~/ytdigest/venv/bin/ytdigest --config ~/ytdigest/config.yaml import-channels subscriptions.csv
+~/ytdigest/venv/bin/ytdigest --config ~/ytdigest/config.yaml seed --since $(date -I)
+~/ytdigest/venv/bin/ytdigest --config ~/ytdigest/config.yaml status
+```
+
+**Dedicated user:**
+
+```bash
+sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml init-db
+sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml import-channels subscriptions.csv
+sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml seed --since $(date -I)
+sudo -u ytdigest /opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml status
 ```
 
 **Do not skip this.** Without seeding, the first run sees ~900 back-catalogue videos and tries to
@@ -144,10 +261,13 @@ fetch transcripts for all of them in one burst — the single most reliable way 
 throttled by YouTube. `status` should show a large `skipped`/`delivered` count and **zero**
 `needs_transcript`.
 
-### 12. Install the systemd units
+### 13. Install the systemd units
+
+Copy the units, patch paths if you chose home setup (see step 3), then enable:
 
 ```bash
 sudo cp systemd/*.service systemd/*.timer /etc/systemd/system/
+# home setup only — patch User and paths (see step 3)
 sudo systemctl daemon-reload
 sudo systemctl enable --now ytdigest.timer
 systemctl list-timers ytdigest.timer          # confirm next run time
@@ -158,11 +278,47 @@ sudo systemctl start ytdigest.service         # trigger one now
 Start the bot service only after Stage 3 exists:
 `sudo systemctl enable --now ytdigest-bot.service`
 
-### 13. Backups
+### 14. Web UI (optional)
+
+The web UI runs on your home LAN and provides digest browsing, channel management, YouTube
+subscription sync, and a "Run now" button.
+
+1. Find your Pi's LAN IP: `hostname -I` (e.g. `192.168.1.42`)
+2. Optionally set a **static DHCP reservation** for the Pi so the IP stays stable
+3. Add to `config.yaml`:
+   ```yaml
+   web_host: 0.0.0.0
+   web_port: 8080
+   web_public_url: http://192.168.1.42:8080   # for OAuth redirect URI
+   ```
+4. For YouTube subscription sync, create OAuth credentials in Google Cloud Console:
+   - **Credentials → Create credentials → OAuth client ID → Web application**
+   - Authorized redirect URI: `http://192.168.1.42:8080/auth/youtube/callback`
+   - Add `YOUTUBE_OAUTH_CLIENT_ID` and `YOUTUBE_OAUTH_CLIENT_SECRET` to `.env`
+5. Install and start:
+   ```bash
+   sudo cp systemd/ytdigest-web.service /etc/systemd/system/
+   # home setup only — patch User and paths (see step 3)
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now ytdigest-web
+   ```
+6. Open `http://192.168.1.42:8080` from any device on your LAN
+
+`web_host: 0.0.0.0` means listen on all interfaces — you still access it via the Pi's LAN IP.
+It does not expose the UI to the internet (your router's NAT blocks inbound traffic).
+
+### 15. Backups
 
 Set up an SSH key from the Pi to your VPS, then schedule `scripts/backup.sh` weekly (its own timer or
 a cron line). Verify once by restoring the DB copy elsewhere and running `ytdigest status` against
 it. An untested backup is not a backup.
+
+If you use home setup, set `YTDIGEST_DATA_DIR` to match your `data_dir` in config (default
+`~/ytdigest/data`):
+
+```bash
+YTDIGEST_DATA_DIR=~/ytdigest/data YTDIGEST_BACKUP_REMOTE=user@host:/path/ scripts/backup.sh
+```
 
 ---
 

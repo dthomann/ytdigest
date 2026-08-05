@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Runs — ytdigest{% endblock %}
+{% block content %}
+<h1>Run history</h1>
+<ul class="run-list">
+  {% for run in runs %}
+  <li>
+    <a href="/runs/{{ run.id }}">
+      Run #{{ run.id }} · {{ run.started_at[:10] }}
+      · {{ run.summarized }} videos · {{ run.status }}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% if has_more %}
+<button class="btn"
+        hx-get="/runs?offset={{ offset + 10 }}"
+        hx-target=".run-list"
+        hx-swap="beforeend">
+  Load more
+</button>
+{% endif %}
+{% endblock %}
