@@ -1,0 +1,11 @@
+[Unit]
+Description=Run ytdigest daily
+
+[Timer]
+# Matches config.yaml's digest_hour (06:00 Europe/Zurich). Keep these in sync if you change one.
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

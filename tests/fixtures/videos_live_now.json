@@ -1,0 +1,18 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "id": "vid_live_now",
+      "snippet": {
+        "title": "We're Live Right Now",
+        "channelTitle": "Livestream Channel",
+        "liveBroadcastContent": "live"
+      },
+      "contentDetails": { "duration": "P0D" },
+      "liveStreamingDetails": {
+        "scheduledStartTime": "2026-08-05T18:00:00Z",
+        "actualStartTime": "2026-08-05T18:02:00Z"
+      }
+    }
+  ]
+}

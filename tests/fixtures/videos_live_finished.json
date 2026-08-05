@@ -1,0 +1,19 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "id": "vid_live_finished",
+      "snippet": {
+        "title": "Yesterday's Stream (Ended)",
+        "channelTitle": "Livestream Channel",
+        "liveBroadcastContent": "none"
+      },
+      "contentDetails": { "duration": "PT3H1M0S" },
+      "liveStreamingDetails": {
+        "scheduledStartTime": "2026-08-04T18:00:00Z",
+        "actualStartTime": "2026-08-04T18:03:00Z",
+        "actualEndTime": "2026-08-04T21:04:00Z"
+      }
+    }
+  ]
+}

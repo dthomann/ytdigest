@@ -1,0 +1,17 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "id": "vid_live_upcoming",
+      "snippet": {
+        "title": "Scheduled Q&A Livestream",
+        "channelTitle": "Livestream Channel",
+        "liveBroadcastContent": "upcoming"
+      },
+      "contentDetails": { "duration": "P0D" },
+      "liveStreamingDetails": {
+        "scheduledStartTime": "2026-08-06T18:00:00Z"
+      }
+    }
+  ]
+}

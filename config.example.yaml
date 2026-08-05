@@ -1,0 +1,41 @@
+# ytdigest configuration. Copy to config.yaml and adjust.
+# Secrets (API keys, tokens) never go here — they live in .env.
+# See README.md for a full description of every key.
+
+data_dir: data                    # all runtime state lives under here (db, transcripts, digests)
+timezone: Europe/Zurich           # used for all "local time" displays and the systemd timer
+
+digest_hour: 6                    # local hour (0-23) the daily run/timer is intended to fire at
+
+# --- discovery ---
+rss_delay_seconds: [1, 2]         # jittered sleep range between RSS feed polls
+max_channel_consecutive_errors: 10 # warn in digest once a channel's error streak reaches this
+
+# --- classification ---
+min_duration_seconds: 180         # videos at/under this duration are skipped as Shorts
+shorts_probe: false               # HEAD-probe youtube.com/shorts/{id} for videos in the 60-180s band
+summarize_finished_livestreams: false  # if true, finished livestreams are queued for transcript+summary
+
+# --- metadata / quota ---
+youtube_api_quota_daily: 10000
+youtube_api_quota_warn_fraction: 0.9   # abort the run once this fraction of daily quota is used
+
+# --- transcripts (stage 2) ---
+transcript_languages: [de, en]
+transcript_delay_seconds: [2, 5]
+max_transcript_fetches_per_run: 40
+enable_whisper_fallback: false
+whisper_max_duration_minutes: 120
+retry_backoff_hours: [6, 12, 24, 48, 96]
+max_transcript_attempts: 5
+
+# --- summarization (stage 2) ---
+summary_model: gemini-2.5-flash-lite
+summary_mode: sync                # sync|batch — only sync is implemented (see README)
+summary_words: [60, 100]
+output_language: en
+max_input_chars: 400000
+
+# --- delivery (stage 2) ---
+delivery_channel: stdout          # telegram | stdout | file
+telegram_message_delay_seconds: 1

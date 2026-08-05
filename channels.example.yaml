@@ -1,0 +1,5 @@
+# Optional: seed channels directly instead of (or in addition to) `ytdigest import-channels`.
+# Not required — subscriptions.csv (Takeout export) is the normal path.
+channels:
+  - channel_id: UC_x5XG1OV2P6uZZ5FSM9Ttw
+    title: Google for Developers

@@ -1,0 +1,15 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "id": "vid_normal_001",
+      "snippet": {
+        "title": "A Deep Dive Into Something Real",
+        "channelTitle": "Normal Channel",
+        "liveBroadcastContent": "none"
+      },
+      "contentDetails": { "duration": "PT8M12S" },
+      "liveStreamingDetails": {}
+    }
+  ]
+}

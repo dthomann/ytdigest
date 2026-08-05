@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns="http://www.w3.org/2005/Atom">
+  <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UClivestream000000000000"/>
+  <id>yt:channel:UClivestream000000000000</id>
+  <yt:channelId>UClivestream000000000000</yt:channelId>
+  <title>Livestream Channel</title>
+  <link rel="alternate" href="https://www.youtube.com/channel/UClivestream000000000000"/>
+  <entry>
+    <id>yt:video:vid_live_upcoming</id>
+    <yt:videoId>vid_live_upcoming</yt:videoId>
+    <yt:channelId>UClivestream000000000000</yt:channelId>
+    <title>Scheduled Q&amp;A Livestream</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=vid_live_upcoming"/>
+    <published>2026-08-05T06:00:00+00:00</published>
+    <updated>2026-08-05T06:00:00+00:00</updated>
+  </entry>
+</feed>

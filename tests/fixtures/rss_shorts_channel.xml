@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns="http://www.w3.org/2005/Atom">
+  <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCshorts0000000000000000"/>
+  <id>yt:channel:UCshorts0000000000000000</id>
+  <yt:channelId>UCshorts0000000000000000</yt:channelId>
+  <title>Shorts Channel</title>
+  <link rel="alternate" href="https://www.youtube.com/channel/UCshorts0000000000000000"/>
+  <entry>
+    <id>yt:video:vid_short_001</id>
+    <yt:videoId>vid_short_001</yt:videoId>
+    <yt:channelId>UCshorts0000000000000000</yt:channelId>
+    <title>Quick Tip #47</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=vid_short_001"/>
+    <published>2026-08-04T08:00:00+00:00</published>
+    <updated>2026-08-04T08:01:00+00:00</updated>
+  </entry>
+</feed>

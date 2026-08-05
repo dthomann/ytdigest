@@ -1,0 +1,15 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "id": "vid_normal_002",
+      "snippet": {
+        "title": "The 2 Hour Podcast Episode",
+        "channelTitle": "Normal Channel",
+        "liveBroadcastContent": "none"
+      },
+      "contentDetails": { "duration": "PT2H13M7S" },
+      "liveStreamingDetails": {}
+    }
+  ]
+}

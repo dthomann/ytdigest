@@ -1,0 +1,17 @@
+[Unit]
+Description=ytdigest daily run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ytdigest
+WorkingDirectory=/opt/ytdigest
+EnvironmentFile=/opt/ytdigest/.env
+ExecStart=/opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml run
+MemoryMax=300M
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

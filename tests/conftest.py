@@ -1,0 +1,76 @@
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ytdigest import db
+from ytdigest.config import Config
+from ytdigest.util import utcnow_iso
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def load_fixture_text(name: str) -> str:
+    return (FIXTURES_DIR / name).read_text(encoding="utf-8")
+
+
+def load_fixture_json(name: str) -> dict:
+    return json.loads(load_fixture_text(name))
+
+
+@pytest.fixture
+def conn(tmp_path):
+    c = db.init_db(tmp_path / "test.db")
+    yield c
+    c.close()
+
+
+@pytest.fixture
+def config(tmp_path):
+    return Config(
+        values={
+            "data_dir": str(tmp_path / "data"),
+            "timezone": "Europe/Zurich",
+            "digest_hour": 6,
+            "rss_delay_seconds": [0, 0],
+            "max_channel_consecutive_errors": 10,
+            "min_duration_seconds": 180,
+            "shorts_probe": False,
+            "summarize_finished_livestreams": False,
+            "youtube_api_quota_daily": 10000,
+            "youtube_api_quota_warn_fraction": 0.9,
+            "transcript_languages": ["de", "en"],
+            "transcript_delay_seconds": [0, 0],
+            "max_transcript_fetches_per_run": 40,
+            "enable_whisper_fallback": False,
+            "whisper_max_duration_minutes": 120,
+            "retry_backoff_hours": [6, 12, 24, 48, 96],
+            "max_transcript_attempts": 5,
+            "summary_model": "gemini-2.5-flash-lite",
+            "summary_mode": "sync",
+            "summary_words": [60, 100],
+            "output_language": "en",
+            "max_input_chars": 400000,
+            "delivery_channel": "stdout",
+            "telegram_message_delay_seconds": 0,
+        },
+        secrets={
+            "YOUTUBE_API_KEY": "test-key",
+            "GEMINI_API_KEY": "",
+            "GROQ_API_KEY": "",
+            "TELEGRAM_BOT_TOKEN": "",
+            "TELEGRAM_ALLOWED_CHAT_ID": "",
+        },
+        config_path=None,
+    )
+
+
+def insert_channel(conn, channel_id: str, title: str = "Test Channel", enabled: int = 1):
+    conn.execute(
+        "INSERT INTO channels (channel_id, title, added_at, enabled) VALUES (?, ?, ?, ?)",
+        (channel_id, title, utcnow_iso(), enabled),
+    )
+    conn.commit()

@@ -1,0 +1,15 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "id": "vid_short_001",
+      "snippet": {
+        "title": "Quick Tip #47",
+        "channelTitle": "Shorts Channel",
+        "liveBroadcastContent": "none"
+      },
+      "contentDetails": { "duration": "PT45S" },
+      "liveStreamingDetails": {}
+    }
+  ]
+}
