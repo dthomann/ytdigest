@@ -61,7 +61,7 @@ def config(tmp_path):
     return Config(
         values={
             "data_dir": str(tmp_path / "data"),
-            "timezone": "Europe/Zurich",
+            "timezone": "UTC",
             "digest_hour": 6,
             "rss_delay_seconds": [0, 0],
             "max_channel_consecutive_errors": 10,

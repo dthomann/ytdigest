@@ -15,6 +15,7 @@ from .config import Config, ConfigError, load_config, update_config_file
 DEDICATED_INSTALL_DIR = Path("/opt/ytdigest")
 UNIT_NAMES = {
     "web": "ytdigest-web.service",
+    "bot": "ytdigest-bot.service",
     "run": "ytdigest.service",
     "timer": "ytdigest.timer",
 }
@@ -54,6 +55,7 @@ class ServicesSnapshot:
     digest_hour: int
     timezone: str
     web: UnitStatus
+    bot: UnitStatus
     timer: UnitStatus
     next_run: str | None = None
     sudo_hint: str | None = None
@@ -279,6 +281,7 @@ def get_services_snapshot(config: Config) -> ServicesSnapshot:
     ctx = install_context_from_config(config)
     sudo_ok = sudo_available()
     web = get_unit_status(UNIT_NAMES["web"], "Web UI")
+    bot = get_unit_status(UNIT_NAMES["bot"], "Telegram Q&A bot")
     timer = get_unit_status(UNIT_NAMES["timer"], "Daily run timer")
     next_run = get_next_timer_run() if timer.installed else None
     return ServicesSnapshot(
@@ -287,6 +290,7 @@ def get_services_snapshot(config: Config) -> ServicesSnapshot:
         digest_hour=config.digest_hour,
         timezone=config.timezone,
         web=web,
+        bot=bot,
         timer=timer,
         next_run=next_run,
         sudo_hint=None if sudo_ok else _sudo_hint(ctx),
@@ -349,6 +353,41 @@ def uninstall_web_service(config: Config) -> str:
     _remove_unit_file(UNIT_NAMES["web"], privileged=privileged)
     _daemon_reload(privileged=privileged)
     return "Web service stopped and removed"
+
+
+def restart_web_service(config: Config) -> str:
+    privileged = os.geteuid() != 0
+    if privileged and not sudo_available():
+        raise SystemdError("sudo is not configured — see Settings for setup instructions")
+    web = get_unit_status(UNIT_NAMES["web"], "Web UI")
+    if not web.installed:
+        return "Web service not installed — skipped restart"
+    _systemctl("restart", "ytdigest-web", privileged=privileged)
+    return "Web service restarted"
+
+
+def install_bot_service(config: Config) -> str:
+    ctx = install_context_from_config(config)
+    content = render_unit(
+        UNIT_NAMES["bot"], ctx, digest_hour=config.digest_hour, timezone=config.timezone
+    )
+    privileged = os.geteuid() != 0
+    if privileged and not sudo_available():
+        raise SystemdError("sudo is not configured — see Settings for setup instructions")
+    _write_unit_file(UNIT_NAMES["bot"], content, privileged=privileged)
+    _daemon_reload(privileged=privileged)
+    _systemctl("enable", "--now", "ytdigest-bot", privileged=privileged)
+    return "Telegram Q&A bot enabled and started"
+
+
+def uninstall_bot_service(config: Config) -> str:
+    privileged = os.geteuid() != 0
+    if privileged and not sudo_available():
+        raise SystemdError("sudo is not configured — see Settings for setup instructions")
+    _systemctl("disable", "--now", "ytdigest-bot", privileged=privileged)
+    _remove_unit_file(UNIT_NAMES["bot"], privileged=privileged)
+    _daemon_reload(privileged=privileged)
+    return "Telegram Q&A bot stopped and disabled"
 
 
 def install_timer_service(config: Config) -> str:

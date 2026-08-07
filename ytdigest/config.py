@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 DEFAULTS = {
     "data_dir": "data",
-    "timezone": "Europe/Zurich",
+    "timezone": "UTC",
     "digest_hour": 6,
     "rss_delay_seconds": [1, 2],
     "max_channel_consecutive_errors": 10,

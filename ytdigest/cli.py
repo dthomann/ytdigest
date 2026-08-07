@@ -1,10 +1,4 @@
-"""ytdigest CLI.
-
-Stage 1: init-db, add-channel, import-channels, seed, run, discover, status.
-Stage 2: fetch-transcripts, summarize, deliver, retry, export.
-Stage 3 (not yet implemented): ask, bot.
-Web UI: web.
-"""
+"""ytdigest CLI — init-db, channels, seed, run, transcripts, summarize, deliver, ask, bot, web."""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +6,8 @@ import logging
 import sys
 from pathlib import Path
 
-from . import classify, db, deliver as deliver_mod, digest as digest_mod, discover, metadata
-from . import summarize as summarize_mod, transcript as transcript_mod
+from . import bot as bot_mod, classify, db, deliver as deliver_mod, digest as digest_mod, discover, metadata
+from . import qa as qa_mod, summarize as summarize_mod, transcript as transcript_mod
 from . import channels as channels_mod, pipeline
 from .config import Config, ConfigError, load_config
 from .backfill import META_SEED_CUTOFF, fix_stuck_backfill, validate_cutoff_date
@@ -411,7 +405,7 @@ def cmd_services(args) -> None:
             print(f"user: {snap.context.service_user}")
             print(f"sudo: {'yes' if snap.sudo_available else 'no'}")
             print(f"schedule: {snap.digest_hour:02d}:00 {snap.timezone}")
-            for unit in (snap.web, snap.timer):
+            for unit in (snap.web, snap.bot, snap.timer):
                 state = []
                 if unit.installed:
                     state.append("installed")
@@ -432,10 +426,16 @@ def cmd_services(args) -> None:
                 print("Exiting manual web process for systemd handoff…", file=sys.stderr)
         elif action == "uninstall-web":
             print(systemd_units.uninstall_web_service(config))
+        elif action == "restart-web":
+            print(systemd_units.restart_web_service(config))
         elif action == "install-timer":
             print(systemd_units.install_timer_service(config))
         elif action == "uninstall-timer":
             print(systemd_units.uninstall_timer_service(config))
+        elif action == "install-bot":
+            print(systemd_units.install_bot_service(config))
+        elif action == "uninstall-bot":
+            print(systemd_units.uninstall_bot_service(config))
         elif action == "set-schedule":
             print(
                 systemd_units.update_run_schedule(
@@ -449,12 +449,29 @@ def cmd_services(args) -> None:
         sys.exit(1)
 
 
-def _not_implemented(stage: str):
-    def handler(args):
-        print(f"Not implemented yet — this command lands in {stage}.", file=sys.stderr)
-        sys.exit(2)
+def cmd_ask(args) -> None:
+    config = _load_config(args)
+    conn = _connect(config)
+    api_key = config.secrets.get("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY not set", file=sys.stderr)
+        sys.exit(1)
+    try:
+        answer = qa_mod.answer_question(conn, config, args.video_id, args.question, api_key)
+    except qa_mod.QAError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(answer)
 
-    return handler
+
+def cmd_bot(args) -> None:
+    config = _load_config(args)
+    conn = _connect(config)
+    try:
+        bot_mod.run_bot(config, conn)
+    except bot_mod.BotError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -529,10 +546,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=["txt", "md"], default="txt")
     p.set_defaults(func=cmd_export)
 
-    for name, stage in [("ask", "Stage 3"), ("bot", "Stage 3")]:
-        p = sub.add_parser(name, help=f"({stage}, not yet implemented)")
-        p.add_argument("args", nargs="*")
-        p.set_defaults(func=_not_implemented(stage))
+    p = sub.add_parser("ask", help="ask a follow-up question about one video (CLI equivalent of a Telegram reply)")
+    p.add_argument("video_id")
+    p.add_argument("question")
+    p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("bot", help="start the Telegram long-polling Q&A bot")
+    p.set_defaults(func=cmd_bot)
 
     p = sub.add_parser("status", help="show counts by state, last run, quota, pending retries")
     p.set_defaults(func=cmd_status)
@@ -540,7 +560,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("web", help="start the web UI")
     p.set_defaults(func=cmd_web)
 
-    p = sub.add_parser("services", help="install/manage systemd units (web UI + daily timer)")
+    p = sub.add_parser("services", help="install/manage systemd units (web UI, bot, daily timer)")
     svc = p.add_subparsers(dest="services_action", required=True)
     p_status = svc.add_parser("status", help="show service and timer status")
     p_status.set_defaults(func=cmd_services)
@@ -548,10 +568,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_install_web.set_defaults(func=cmd_services)
     p_uninstall_web = svc.add_parser("uninstall-web", help="stop and remove ytdigest-web.service")
     p_uninstall_web.set_defaults(func=cmd_services)
+    p_restart_web = svc.add_parser("restart-web", help="restart ytdigest-web.service")
+    p_restart_web.set_defaults(func=cmd_services)
     p_install_timer = svc.add_parser("install-timer", help="install and enable ytdigest.timer")
     p_install_timer.set_defaults(func=cmd_services)
     p_uninstall_timer = svc.add_parser("uninstall-timer", help="disable and remove ytdigest.timer")
     p_uninstall_timer.set_defaults(func=cmd_services)
+    p_install_bot = svc.add_parser("install-bot", help="install and start ytdigest-bot.service")
+    p_install_bot.set_defaults(func=cmd_services)
+    p_uninstall_bot = svc.add_parser("uninstall-bot", help="stop and remove ytdigest-bot.service")
+    p_uninstall_bot.set_defaults(func=cmd_services)
     p_schedule = svc.add_parser("set-schedule", help="update digest_hour/timezone in config (+ timer if installed)")
     p_schedule.add_argument("--hour", dest="digest_hour", type=int, required=True)
     p_schedule.add_argument("--timezone", required=True)

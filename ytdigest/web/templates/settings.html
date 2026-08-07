@@ -37,7 +37,7 @@ sudo chmod 440 /etc/sudoers.d/ytdigest</pre>
     </label>
     <label>
       Timezone
-      <input type="text" name="timezone" value="{{ snapshot.timezone }}" placeholder="Europe/Zurich" required>
+      <input type="text" name="timezone" value="{{ snapshot.timezone }}" placeholder="UTC" required>
     </label>
     <button type="submit" class="btn btn-primary">Save schedule</button>
   </form>
@@ -64,6 +64,31 @@ sudo chmod 440 /etc/sudoers.d/ytdigest</pre>
     {% else %}
     <form method="post" action="/settings/timer/install" class="inline">
       <button type="submit" class="btn btn-primary" {% if not snapshot.sudo_available %}disabled{% endif %}>Install timer</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<section class="settings-section">
+  <h2>Telegram Q&amp;A bot</h2>
+  <p class="meta">systemd service (<code>ytdigest-bot.service</code>) — long-polling listener for reply-based questions. Requires <code>GEMINI_API_KEY</code>, <code>TELEGRAM_BOT_TOKEN</code>, and <code>TELEGRAM_ALLOWED_CHAT_ID</code> in <code>.env</code>.</p>
+  <p class="status-line">
+    {% if snapshot.bot.installed %}
+      {% if snapshot.bot.active %}<span class="success">Running</span>{% elif snapshot.bot.enabled %}<span class="error">Enabled but not running</span>{% else %}<span class="meta">Installed, disabled</span>{% endif %}
+      {% if snapshot.bot.detail %} · {{ snapshot.bot.detail }}{% endif %}
+    {% else %}
+      <span class="meta">Not enabled</span>
+    {% endif %}
+  </p>
+  <div class="service-actions">
+    {% if snapshot.bot.installed and snapshot.bot.enabled %}
+    <form method="post" action="/settings/bot/disable" class="inline"
+          onsubmit="return confirm('Stop the Telegram Q&amp;A bot? Replies to digest messages will go unanswered until you enable it again.');">
+      <button type="submit" class="btn btn-danger" {% if not snapshot.sudo_available %}disabled{% endif %}>Disable bot service</button>
+    </form>
+    {% else %}
+    <form method="post" action="/settings/bot/enable" class="inline">
+      <button type="submit" class="btn btn-primary" {% if not snapshot.sudo_available %}disabled{% endif %}>Enable bot service</button>
     </form>
     {% endif %}
   </div>

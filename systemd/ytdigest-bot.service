@@ -1,5 +1,5 @@
 [Unit]
-Description=ytdigest Telegram Q&A bot (Stage 3 — not yet implemented)
+Description=ytdigest Telegram Q&A bot
 After=network-online.target
 Wants=network-online.target
 

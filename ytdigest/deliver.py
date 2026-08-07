@@ -1,7 +1,7 @@
 """Delivery backends: telegram | stdout | file.
 
-Telegram delivers one message per video (the message_id is what makes Stage 3 reply-based Q&A
-work, and it sidesteps the 4096-character message limit) plus a header and livestream
+Telegram delivers one message per video (the message_id enables reply-based Q&A and sidesteps
+the 4096-character message limit) plus a header and livestream
 announcements. MarkdownV2 is used throughout with careful escaping of dynamic content only —
 literal formatting characters we add ourselves (`*bold*`, bullets, em dashes) are left alone.
 """

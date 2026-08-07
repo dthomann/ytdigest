@@ -55,3 +55,42 @@ def test_settings_page_loads(config, tmp_path):
     assert "Settings" in resp.text
     assert "Daily run schedule" in resp.text
     assert "Web service" in resp.text
+    assert "Telegram Q&amp;A bot" in resp.text or "Telegram Q&A bot" in resp.text
+
+
+def test_settings_bot_enable_route(config, tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("digest_hour: 6\ntimezone: Europe/Zurich\n")
+    (tmp_path / "venv" / "bin").mkdir(parents=True)
+    (tmp_path / "venv" / "bin" / "ytdigest").write_text("#!/bin/sh\n")
+    config.config_path = config_path
+    db.init_db(config.db_path)
+    app = create_app(config)
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        "ytdigest.web.routes.settings.install_bot_service",
+        lambda cfg: "Telegram Q&A bot enabled and started",
+    )
+    resp = client.post("/settings/bot/enable", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash=" in resp.headers["location"]
+
+
+def test_settings_bot_disable_route(config, tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("digest_hour: 6\ntimezone: Europe/Zurich\n")
+    (tmp_path / "venv" / "bin").mkdir(parents=True)
+    (tmp_path / "venv" / "bin" / "ytdigest").write_text("#!/bin/sh\n")
+    config.config_path = config_path
+    db.init_db(config.db_path)
+    app = create_app(config)
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        "ytdigest.web.routes.settings.uninstall_bot_service",
+        lambda cfg: "Telegram Q&A bot stopped and disabled",
+    )
+    resp = client.post("/settings/bot/disable", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "flash=" in resp.headers["location"]

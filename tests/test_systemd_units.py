@@ -118,6 +118,80 @@ def test_update_run_schedule_with_timer_installed(mock_status, mock_install, ins
     mock_install.assert_called_once()
 
 
+@patch("ytdigest.systemd_units._systemctl")
+@patch("ytdigest.systemd_units.get_unit_status")
+@patch("ytdigest.systemd_units.sudo_available", return_value=True)
+def test_restart_web_service(mock_sudo, mock_status, mock_systemctl, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    from ytdigest.systemd_units import restart_web_service
+
+    mock_status.return_value = UnitStatus(
+        name="ytdigest-web.service",
+        label="Web UI",
+        installed=True,
+        enabled=True,
+        active=True,
+        detail=None,
+    )
+    message = restart_web_service(config)
+    assert "restarted" in message.lower()
+    mock_systemctl.assert_called_once_with("restart", "ytdigest-web", privileged=True)
+
+
+@patch("ytdigest.systemd_units.get_unit_status")
+@patch("ytdigest.systemd_units.sudo_available", return_value=True)
+def test_restart_web_service_skips_when_not_installed(mock_sudo, mock_status, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    from ytdigest.systemd_units import restart_web_service
+
+    mock_status.return_value = UnitStatus(
+        name="ytdigest-web.service",
+        label="Web UI",
+        installed=False,
+        enabled=None,
+        active=None,
+        detail="not installed",
+    )
+    message = restart_web_service(config)
+    assert "skipped" in message.lower()
+
+
+@patch("ytdigest.systemd_units._systemctl")
+@patch("ytdigest.systemd_units._daemon_reload")
+@patch("ytdigest.systemd_units._write_unit_file")
+@patch("ytdigest.systemd_units.sudo_available", return_value=True)
+def test_install_bot_service(mock_sudo, mock_write, mock_reload, mock_systemctl, install_tree):
+    _, config_path = install_tree
+    repo_systemd = Path(__file__).resolve().parent.parent / "systemd"
+    install_dir = config_path.parent
+    (install_dir / "systemd" / "ytdigest-bot.service").write_text(
+        (repo_systemd / "ytdigest-bot.service").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    from ytdigest.systemd_units import install_bot_service
+
+    message = install_bot_service(config)
+    assert "bot enabled" in message.lower()
+    mock_systemctl.assert_any_call("enable", "--now", "ytdigest-bot", privileged=True)
+
+
+@patch("ytdigest.systemd_units._systemctl")
+@patch("ytdigest.systemd_units._daemon_reload")
+@patch("ytdigest.systemd_units._remove_unit_file")
+@patch("ytdigest.systemd_units.sudo_available", return_value=True)
+def test_uninstall_bot_service(mock_sudo, mock_remove, mock_reload, mock_systemctl, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    from ytdigest.systemd_units import uninstall_bot_service
+
+    message = uninstall_bot_service(config)
+    assert "bot stopped" in message.lower()
+    mock_systemctl.assert_any_call("disable", "--now", "ytdigest-bot", privileged=True)
+
+
 @patch("ytdigest.systemd_units._schedule_web_service_start")
 @patch("ytdigest.systemd_units._systemctl")
 @patch("ytdigest.systemd_units._daemon_reload")

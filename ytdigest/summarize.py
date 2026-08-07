@@ -183,7 +183,7 @@ def run_summarize_phase(
 ) -> SummarizePhaseResult:
     """Summarize every video in state has_transcript (this run's and any left over from a prior
     run whose summarization failed). Failures stay in has_transcript for the next run — no backoff
-    scheduling, per spec."""
+    scheduling."""
     result = SummarizePhaseResult()
     rows = conn.execute(
         "SELECT * FROM videos WHERE state = ? ORDER BY discovered_at", (VideoState.HAS_TRANSCRIPT.value,)

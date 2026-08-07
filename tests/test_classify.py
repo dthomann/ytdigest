@@ -46,12 +46,15 @@ def test_classify_upcoming_livestream_p0d_not_swallowed_by_duration_branch():
 
 
 def test_classify_upcoming_with_schedule_stays_upcoming():
+    scheduled = "2026-08-06T18:00:00Z"
+    now = datetime(2026, 8, 6, 19, 0, 0, tzinfo=timezone.utc)
     state, kind = classify_row(
         "upcoming",
         None,
         0,
         min_duration_seconds=180,
-        scheduled_start="2026-08-06T18:00:00Z",
+        scheduled_start=scheduled,
+        now=now,
     )
     assert state == VideoState.LIVE_UPCOMING.value
     assert kind == VideoKind.LIVE.value

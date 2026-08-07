@@ -3,7 +3,7 @@
 # See README.md for a full description of every key.
 
 data_dir: data                    # all runtime state lives under here (db, transcripts, digests)
-timezone: Europe/Zurich           # used for all "local time" displays and the systemd timer
+timezone: UTC                     # used for all "local time" displays and the systemd timer
 
 digest_hour: 6                    # local hour (0-23) the daily run/timer is intended to fire at
 
@@ -20,7 +20,7 @@ summarize_finished_livestreams: false  # if true, finished livestreams are queue
 youtube_api_quota_daily: 10000
 youtube_api_quota_warn_fraction: 0.9   # abort the run once this fraction of daily quota is used
 
-# --- transcripts (stage 2) ---
+# --- transcripts ---
 transcript_languages: [en]         # native caption tracks only; summaries use output_language
 transcript_delay_seconds: [2, 5]
 max_transcript_fetches_per_run: 40
@@ -29,14 +29,14 @@ whisper_max_duration_minutes: 120
 retry_backoff_hours: [6, 12, 24, 48, 96]
 max_transcript_attempts: 5
 
-# --- summarization (stage 2) ---
+# --- summarization ---
 summary_model: gemini-2.5-flash-lite
 summary_mode: sync                # sync|batch — only sync is implemented (see README)
 summary_words: [60, 100]
 output_language: en
 max_input_chars: 400000
 
-# --- delivery (stage 2) ---
+# --- delivery ---
 delivery_channel: stdout          # telegram | stdout | file
 telegram_message_delay_seconds: 1
 

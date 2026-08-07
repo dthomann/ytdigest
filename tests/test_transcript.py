@@ -369,7 +369,7 @@ def test_process_video_fatal_video_missing_skips_tier2(conn, config):
 
 def test_process_video_captions_disabled_still_tries_tier2_then_fails_permanent(conn, config):
     # tier1 says captions disabled (fatal, but not video_missing) -> tier2 is still attempted
-    # per spec ("sometimes succeeds when Tier 1 fails"); if tier2 agrees, it's permanent.
+    # tier2 is still attempted when tier1 fails; if tier2 agrees, it's permanent.
     insert_channel(conn, "UC1")
     insert_pending_video(conn, "v1")
     row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()

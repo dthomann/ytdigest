@@ -8,9 +8,11 @@ from ...config import ConfigError
 from ...systemd_units import (
     SystemdError,
     get_services_snapshot,
+    install_bot_service,
     install_timer_service,
     install_web_service,
     schedule_process_exit,
+    uninstall_bot_service,
     uninstall_timer_service,
     uninstall_web_service,
     update_run_schedule,
@@ -106,6 +108,26 @@ def timer_uninstall(request: Request):
     config = request.app.state.config
     try:
         message = uninstall_timer_service(config)
+        return RedirectResponse(_flash_url(message, ok=True), status_code=303)
+    except SystemdError as exc:
+        return RedirectResponse(_flash_url(str(exc), ok=False), status_code=303)
+
+
+@router.post("/bot/enable", response_class=HTMLResponse)
+def bot_enable(request: Request):
+    config = request.app.state.config
+    try:
+        message = install_bot_service(config)
+        return RedirectResponse(_flash_url(message, ok=True), status_code=303)
+    except SystemdError as exc:
+        return RedirectResponse(_flash_url(str(exc), ok=False), status_code=303)
+
+
+@router.post("/bot/disable", response_class=HTMLResponse)
+def bot_disable(request: Request):
+    config = request.app.state.config
+    try:
+        message = uninstall_bot_service(config)
         return RedirectResponse(_flash_url(message, ok=True), status_code=303)
     except SystemdError as exc:
         return RedirectResponse(_flash_url(str(exc), ok=False), status_code=303)
