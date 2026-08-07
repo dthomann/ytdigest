@@ -10,3 +10,4 @@ config.yaml
 .sync_flash.json
 .venv/
 youtube-digest-spec.md
+subscriptions.csv
