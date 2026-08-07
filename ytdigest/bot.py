@@ -10,15 +10,17 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from . import qa
+from . import db, pipeline, qa
 from .deliver import TELEGRAM_API
 from .models import VideoState
+from .run_lock import RunInProgressError
 from .util import utcnow_iso
 
 logger = logging.getLogger("ytdigest")
 
 HELP_TEXT = """ytdigest bot commands:
 /status — pipeline counts and last run
+/run — start the full pipeline (discover → summarize → deliver)
 /last — most recently delivered video
 /channels — enabled channels
 /retry <video_id> — reset a failed_permanent video for retry
@@ -26,6 +28,9 @@ HELP_TEXT = """ytdigest bot commands:
 
 You can also reply to a digest video message with your question.
 """
+
+_run_state_lock = threading.Lock()
+_run_in_progress = False
 
 
 class BotError(Exception):
@@ -157,6 +162,64 @@ def format_channels(conn: sqlite3.Connection) -> str:
     return "\n".join(lines)
 
 
+def format_run_result(result: pipeline.RunResult) -> str:
+    lines = [
+        f"Run #{result.run_id} finished status={result.status}",
+        f"discovered={result.discovered} summarized={result.summarized} "
+        f"failed={result.failed} api_units={result.api_units}",
+    ]
+    if result.notes:
+        preview = "; ".join(result.notes[:5])
+        if len(result.notes) > 5:
+            preview += f" (+{len(result.notes) - 5} more)"
+        lines.append(preview)
+    return "\n".join(lines)
+
+
+def start_pipeline_run(config, bot_token: str, chat_id: str, post_fn=None) -> str:
+    global _run_in_progress
+    with _run_state_lock:
+        if _run_in_progress:
+            return "A run is already in progress."
+        _run_in_progress = True
+
+    def _run() -> None:
+        global _run_in_progress
+        try:
+            conn = db.connect(config.db_path)
+            try:
+                result = pipeline.run_pipeline(conn, config)
+                send_bot_message(
+                    bot_token,
+                    chat_id,
+                    format_run_result(result),
+                    post_fn=post_fn,
+                )
+            except RunInProgressError:
+                send_bot_message(
+                    bot_token,
+                    chat_id,
+                    "A run is already in progress.",
+                    post_fn=post_fn,
+                )
+            except Exception:
+                logger.exception("bot-triggered run failed")
+                send_bot_message(
+                    bot_token,
+                    chat_id,
+                    "Pipeline run failed. Check logs for details.",
+                    post_fn=post_fn,
+                )
+            finally:
+                conn.close()
+        finally:
+            with _run_state_lock:
+                _run_in_progress = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return "Pipeline run started…"
+
+
 def cmd_retry(conn: sqlite3.Connection, video_id: str) -> str:
     row = conn.execute("SELECT state FROM videos WHERE video_id = ?", (video_id,)).fetchone()
     if row is None:
@@ -216,6 +279,15 @@ def handle_update(
 
         if command == "/status":
             send_bot_message(bot_token, chat_id, format_status(conn), post_fn=post_fn)
+            return
+
+        if command == "/run":
+            send_bot_message(
+                bot_token,
+                chat_id,
+                start_pipeline_run(config, bot_token, chat_id, post_fn=post_fn),
+                post_fn=post_fn,
+            )
             return
 
         if command == "/last":

@@ -61,74 +61,122 @@ Set `delivery_channel: telegram` in `config.yaml` (and fill in `TELEGRAM_BOT_TOK
 chat ID: message your bot once (a bot can't message you first), then
 `curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates"`.
 
-For Q&A, also set `GEMINI_API_KEY` and start the bot (foreground or via systemd):
+For Q&A, also set `GEMINI_API_KEY` and start the bot (foreground or via systemd). See
+[Telegram bot](#telegram-bot) for how delivery and commands work.
 
 ```bash
 ytdigest ask <video_id> "What did they say about pricing?"
-ytdigest bot    # long-polling listener — reply to digest messages or use /ask
+ytdigest bot
 ```
 
 ## CLI
 
-| Command | Notes |
-|---|---|
-| `init-db` | Creates `data/ytdigest.db` (WAL mode) |
-| `add-channel <url\|@handle\|UC…>` | Resolving a handle needs `YOUTUBE_API_KEY` (one API call) |
-| `import-channels <file>` | Takeout CSV or newline list; UC ids need no network |
-| `seed --since YYYY-MM-DD` | Backfill — run once before the first real `run` |
+| Command                                                          | Notes                                                                                  |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `init-db`                                                        | Creates `data/ytdigest.db` (WAL mode)                                                  |
+| `add-channel <url\|@handle\|UC…>`                                | Resolving a handle needs `YOUTUBE_API_KEY` (one API call)                              |
+| `import-channels <file>`                                         | Takeout CSV or newline list; UC ids need no network                                    |
+| `seed --since YYYY-MM-DD`                                        | Backfill — run once before the first real `run`                                        |
 | `run [--dry-run] [--limit N] [--channel telegram\|stdout\|file]` | Full pipeline; `--dry-run` touches nothing; `--limit` caps transcript fetches this run |
-| `discover [--dry-run]` | Discovery phase only |
-| `fetch-transcripts [--limit N]` | Transcript phase only (3-tier chain, retry/backoff) |
-| `summarize` | Summarize every video currently in `has_transcript` |
-| `deliver [--channel telegram\|stdout\|file]` | Build + send the digest from current DB state (no discover/transcript/summarize) |
-| `retry <video_id> \| --all-failed` | Reset `failed_permanent` video(s) back to `needs_transcript` |
-| `export <video_id> [--format txt\|md]` | Print a video's transcript, with summary/metadata in `md` mode |
-| `status` | Counts by state, last run, pending retries, channel errors |
-| `ask <video_id> <question>` | Ask a follow-up question (uses `.jsonl` transcript + Gemini) |
-| `bot` | Long-polling Telegram Q&A bot (`/status`, `/last`, `/channels`, `/retry`, `/ask`) |
-| `web` | Start the LAN web UI (digest browser, channels, sync, run now) |
-| `enable-channel`, `disable-channel` | Toggle a channel on/off |
+| `discover [--dry-run]`                                           | Discovery phase only                                                                   |
+| `fetch-transcripts [--limit N]`                                  | Transcript phase only (3-tier chain, retry/backoff)                                    |
+| `summarize`                                                      | Summarize every video currently in `has_transcript`                                    |
+| `deliver [--channel telegram\|stdout\|file]`                     | Build + send the digest from current DB state (no discover/transcript/summarize)       |
+| `retry <video_id> \| --all-failed`                               | Reset `failed_permanent` video(s) back to `needs_transcript`                           |
+| `export <video_id> [--format txt\|md]`                           | Print a video's transcript, with summary/metadata in `md` mode                         |
+| `status`                                                         | Counts by state, last run, pending retries, channel errors                             |
+| `ask <video_id> <question>`                                      | Ask a follow-up question (uses `.jsonl` transcript + Gemini)                           |
+| `bot`                                                            | Long-polling Telegram Q&A bot — see [Telegram bot](#telegram-bot)                      |
+| `web`                                                            | Start the LAN web UI (digest browser, channels, sync, run now)                         |
+| `enable-channel`, `disable-channel`                              | Toggle a channel on/off                                                                |
+
+## Telegram bot
+
+With `delivery_channel: telegram`, the daily pipeline sends your digest to Telegram as **one
+message per video** (plus a short header and any livestream announcements). Each video message
+includes the title, channel, duration, publish time, one-paragraph summary, and a YouTube link.
+That layout keeps messages readable, avoids Telegram's 4096-character limit, and lets the bot tie
+follow-up questions to a specific video.
+
+The bot (`ytdigest bot`) is a separate long-polling process from the scheduled pipeline. It only
+accepts input from the chat ID in `TELEGRAM_ALLOWED_CHAT_ID`. Q&A requires `GEMINI_API_KEY` — the
+bot answers using the stored timestamped transcript (and may include `?t=` deep links when citing
+a moment).
+
+### Asking questions
+
+The easiest way to ask about a video is to **reply to its digest message** with your question — no
+command needed. The bot looks up which video you mean from the Telegram message ID stored at
+delivery time.
+
+You can also use `/ask <video_id> <question>` when you want to ask about a video without replying
+to its digest message (as long as a transcript exists). The same Q&A engine is available from the
+CLI: `ytdigest ask <video_id> "…"`.
+
+### Commands
+
+Send `/help` (or `/start`) anytime for a short command list in Telegram.
+
+| Command | What it does |
+| ------- | ------------ |
+| `/help`, `/start` | List available commands and mention reply-based Q&A |
+| `/status` | Video counts by pipeline state, enabled channels, last run, pending retries |
+| `/run` | Start the full pipeline in the background (discover → summarize → deliver); the bot posts a summary when it finishes |
+| `/last` | Show the most recently delivered video |
+| `/channels` | List enabled channels |
+| `/retry <video_id>` | Reset a `failed_permanent` video back into the transcript queue |
+| `/ask <video_id> <question>` | Ask about any video with a stored transcript |
+
+### Running the bot
+
+```bash
+ytdigest bot    # foreground — reply to digest messages or use commands above
+```
+
+On a Pi, enable the systemd unit once credentials are in place:
+`sudo systemctl enable --now ytdigest-bot.service` (see [systemd](#systemd) above).
 
 ## Configuration reference (`config.yaml`)
 
 Secrets never go here — see `.env.example`. Unknown keys and any key that looks like a secret
 (containing `key`/`token`/`secret`/`password`) are rejected at load time.
 
-| Key | Default | Why |
-|---|---|---|
-| `data_dir` | `data` | Root for db/transcripts/digests. Relative paths resolve against `config.yaml`'s directory. |
-| `timezone` | `UTC` | Used for local-time display and the systemd timer. |
-| `digest_hour` | `6` | Intended local hour for the daily run; the systemd timer reads this indirectly (set `OnCalendar` to match). |
-| `rss_delay_seconds` | `[1, 2]` | Jittered sleep between RSS polls — protects the residential IP. |
-| `max_channel_consecutive_errors` | `10` | After this many consecutive poll failures, warn in the digest (likely a dead/renamed channel). |
-| `min_duration_seconds` | `180` | Videos at/under this length are classified as Shorts and skipped. |
-| `shorts_probe` | `false` | HEAD-probe `/shorts/{id}` for the 60–180s band to disambiguate real Shorts from short normal videos. Adds a request per ambiguous video; off by default. |
-| `summarize_finished_livestreams` | `false` | Never summarize livestreams by default. Flip to `true` to route finished streams into the transcript queue instead of the terminal `live_finished` state. |
-| `youtube_api_quota_daily` | `10000` | YouTube Data API's free daily unit quota. |
-| `youtube_api_quota_warn_fraction` | `0.9` | Abort the run (loudly) before crossing this fraction of daily quota, rather than failing opaquely at the hard limit. |
-| `transcript_languages` | `[en]` | Caption language preference order: manual in these languages, then auto-generated in these languages, then any available track. |
-| `transcript_delay_seconds` | `[2, 5]` | Jittered sleep between transcript fetches — the most IP-sensitive phase. |
-| `max_transcript_fetches_per_run` | `40` | Hard cap per run; excess stays queued for next time. Override per invocation with `run --limit N`. |
-| `enable_whisper_fallback` | `false` | Tier-3 ASR fallback via Groq's remote API (never local). Requires `GROQ_API_KEY`. |
-| `whisper_max_duration_minutes` | `120` | Skip ASR fallback beyond this length (cost/time control). |
-| `retry_backoff_hours` | `[6, 12, 24, 48, 96]` | Auto-captions are often missing for hours after upload — this is a retryable, not fatal, condition. |
-| `max_transcript_attempts` | `5` | After this many retries, a video becomes `failed_permanent` (still listed once in the digest so nothing silently vanishes). |
-| `summary_model` | `gemini-2.5-flash-lite` | Cheap, fast, sufficient for one-paragraph summaries. |
-| `summary_mode` | `sync` | `batch` is documented (50% cheaper, up to 24h latency) but not implemented. |
-| `summary_words` | `[60, 100]` | Target summary length. |
-| `output_language` | `en` | All summaries are produced in this language regardless of the source video's language. |
-| `max_input_chars` | `400000` | Above this, map-reduce chunking kicks in instead of a single call. |
-| `delivery_channel` | `stdout` | `telegram` \| `stdout` \| `file`. `stdout` is the development default; switch to `telegram` once `.env` has bot credentials. |
-| `telegram_message_delay_seconds` | `1` | Per-chat rate limit between digest messages. |
-| `web_host` | `0.0.0.0` | Web UI bind address. Use `0.0.0.0` for LAN access; browse via `http://<host-lan-ip>:8080`. |
-| `web_port` | `8080` | Web UI port. |
-| `web_public_url` | `null` | Optional full URL (e.g. `http://192.168.1.100:8080`) for stable YouTube OAuth redirect URI. |
+| Key                               | Default                 | Why                                                                                                                                                       |
+| --------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data_dir`                        | `data`                  | Root for db/transcripts/digests. Relative paths resolve against `config.yaml`'s directory.                                                                |
+| `timezone`                        | `UTC`                   | Used for local-time display and the systemd timer.                                                                                                        |
+| `digest_hour`                     | `6`                     | Intended local hour for the daily run; the systemd timer reads this indirectly (set `OnCalendar` to match).                                               |
+| `rss_delay_seconds`               | `[1, 2]`                | Jittered sleep between RSS polls — protects the residential IP.                                                                                           |
+| `max_channel_consecutive_errors`  | `10`                    | After this many consecutive poll failures, warn in the digest (likely a dead/renamed channel).                                                            |
+| `min_duration_seconds`            | `180`                   | Videos at/under this length are classified as Shorts and skipped.                                                                                         |
+| `shorts_probe`                    | `false`                 | HEAD-probe `/shorts/{id}` for the 60–180s band to disambiguate real Shorts from short normal videos. Adds a request per ambiguous video; off by default.  |
+| `summarize_finished_livestreams`  | `false`                 | Never summarize livestreams by default. Flip to `true` to route finished streams into the transcript queue instead of the terminal `live_finished` state. |
+| `youtube_api_quota_daily`         | `10000`                 | YouTube Data API's free daily unit quota.                                                                                                                 |
+| `youtube_api_quota_warn_fraction` | `0.9`                   | Abort the run (loudly) before crossing this fraction of daily quota, rather than failing opaquely at the hard limit.                                      |
+| `transcript_languages`            | `[en]`                  | Caption language preference order: manual in these languages, then auto-generated in these languages, then any available track.                           |
+| `transcript_delay_seconds`        | `[2, 5]`                | Jittered sleep between transcript fetches — the most IP-sensitive phase.                                                                                  |
+| `max_transcript_fetches_per_run`  | `40`                    | Hard cap per run; excess stays queued for next time. Override per invocation with `run --limit N`.                                                        |
+| `enable_whisper_fallback`         | `false`                 | Tier-3 ASR fallback via Groq's remote API (never local). Requires `GROQ_API_KEY`.                                                                         |
+| `whisper_max_duration_minutes`    | `120`                   | Skip ASR fallback beyond this length (cost/time control).                                                                                                 |
+| `retry_backoff_hours`             | `[6, 12, 24, 48, 96]`   | Auto-captions are often missing for hours after upload — this is a retryable, not fatal, condition.                                                       |
+| `max_transcript_attempts`         | `5`                     | After this many retries, a video becomes `failed_permanent` (still listed once in the digest so nothing silently vanishes).                               |
+| `summary_model`                   | `gemini-2.5-flash-lite` | Cheap, fast, sufficient for one-paragraph summaries.                                                                                                      |
+| `summary_mode`                    | `sync`                  | `batch` is documented (50% cheaper, up to 24h latency) but not implemented.                                                                               |
+| `summary_words`                   | `[60, 100]`             | Target summary length.                                                                                                                                    |
+| `output_language`                 | `en`                    | All summaries are produced in this language regardless of the source video's language.                                                                    |
+| `max_input_chars`                 | `400000`                | Above this, map-reduce chunking kicks in instead of a single call.                                                                                        |
+| `delivery_channel`                | `stdout`                | `telegram` \| `stdout` \| `file`. `stdout` is the development default; switch to `telegram` once `.env` has bot credentials.                              |
+| `telegram_message_delay_seconds`  | `1`                     | Per-chat rate limit between digest messages.                                                                                                              |
+| `web_host`                        | `0.0.0.0`               | Web UI bind address. Use `0.0.0.0` for LAN access; browse via `http://<host-lan-ip>:8080`.                                                                |
+| `web_port`                        | `8080`                  | Web UI port.                                                                                                                                              |
+| `web_public_url`                  | `null`                  | OAuth redirect base URL. Required for YouTube connect — use `http://127.0.0.1:8080` for local-first setup (see below).                                    |
 
 ## Secrets (`.env`, chmod 600)
 
 `YOUTUBE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`,
 `TELEGRAM_ALLOWED_CHAT_ID`, `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET` — see
-`.env.example`. `YOUTUBE_API_KEY` is required for metadata lookups (and for resolving @handles).
+`.env.example`. OAuth credentials are only needed for YouTube subscription sync via the web UI;
+see [Connect YouTube account](#connect-youtube-account-advanced). `YOUTUBE_API_KEY` is required for metadata lookups (and for resolving @handles).
 `GEMINI_API_KEY` is required to summarize — without it, `run` and `summarize` skip that phase, log
 a note, and the video stays queued at `has_transcript` for next time. `GROQ_API_KEY` is only needed
 if `enable_whisper_fallback: true`. `delivery_channel: telegram` requires the two Telegram
@@ -169,11 +217,11 @@ transcript archive, not just the state.
 Pick one approach. **Home setup** is the default for a single-user Pi — simpler deploy, no extra
 accounts. **Dedicated user** is optional if you want process isolation from your login.
 
-| | Home setup (recommended) | Dedicated user (optional) |
-|---|---|---|
-| Install dir (`$YTDIGEST_HOME`) | `~/ytdigest` | `/opt/ytdigest` |
-| Run as | your SSH user (`pi`, etc.) | `ytdigest` system user |
-| Deploy from dev machine | `rsync` straight into `~/ytdigest` | rsync to `/tmp`, then `sudo cp` + `chown` |
+|                                | Home setup (recommended)           | Dedicated user (optional)                 |
+| ------------------------------ | ---------------------------------- | ----------------------------------------- |
+| Install dir (`$YTDIGEST_HOME`) | `~/ytdigest`                       | `/opt/ytdigest`                           |
+| Run as                         | your SSH user (`pi`, etc.)         | `ytdigest` system user                    |
+| Deploy from dev machine        | `rsync` straight into `~/ytdigest` | rsync to `/tmp`, then `sudo cp` + `chown` |
 
 **Home setup** — on the Pi:
 
@@ -238,22 +286,29 @@ you prefer, and set `enable_whisper_fallback: false`.
    → copy the token.
 2. Send your new bot any message — a bot cannot message you first.
 3. Get your chat ID:
+   
    ```bash
    curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | python3 -m json.tool
    ```
+   
    Look for `"chat": {"id": 12345678, ...}`. That number is `TELEGRAM_ALLOWED_CHAT_ID`.
 
 **Channel IDs**
 
-You need canonical `UC…` IDs, not handles.
+You need canonical `UC…` IDs, not handles. Three ways to populate channels:
 
-**Google Takeout (recommended for many channels):**
+**Google Takeout (simplest — no OAuth):**
 https://takeout.google.com → **Deselect all** → select **YouTube and YouTube Music** → click
 *All YouTube data included* → keep only **subscriptions** → export. You get a CSV with a
 `Channel Id` column. Feed it straight to `ytdigest import-channels`.
 
-**Per-channel fallback:** open the channel page, View Source, search for `"channelId":"UC` — or use
-`https://www.youtube.com/@handle/about` and read the ID from the share dialog.
+**Web UI — Connect YouTube account (advanced):** imports subscriptions live and keeps them in
+sync. Google OAuth **does not accept a private LAN IP** (e.g. `http://192.168.1.100:8080`) as a
+redirect URI, so you cannot complete sign-in on the Pi directly unless the web UI is reachable on
+a public domain. For a home Pi, use the [local-first workflow](#connect-youtube-account-advanced)
+below: authenticate once on your dev machine, then copy `data/` to the Pi.
+
+**Per-channel fallback:** `ytdigest add-channel @handle` or add via the web UI Channels page.
 
 **Put secrets in place**
 
@@ -266,6 +321,8 @@ GEMINI_API_KEY=...
 GROQ_API_KEY=...
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_ALLOWED_CHAT_ID=...
+YOUTUBE_OAUTH_CLIENT_ID=...
+YOUTUBE_OAUTH_CLIENT_SECRET=...
 EOF
 chmod 600 ~/ytdigest/.env
 ```
@@ -279,6 +336,8 @@ GEMINI_API_KEY=...
 GROQ_API_KEY=...
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_ALLOWED_CHAT_ID=...
+YOUTUBE_OAUTH_CLIENT_ID=...
+YOUTUBE_OAUTH_CLIENT_SECRET=...
 EOF
 sudo chmod 600 /opt/ytdigest/.env
 sudo chown ytdigest:ytdigest /opt/ytdigest/.env
@@ -366,31 +425,107 @@ sudo systemctl start ytdigest.service         # trigger one now
 Start the bot service when ready for Q&A:
 `sudo systemctl enable --now ytdigest-bot.service`
 
+### Connect YouTube account (advanced)
+
+> **Warning:** This is somewhat advanced. Google OAuth redirect URIs must be exact and cannot use a private LAN IP. 
+> Either expose the web UI on a public domain, or use the local-first workflow below.
+
+The web UI can import and sync your YouTube subscriptions via OAuth. Tokens are stored in `data/ytdigest.db`; after a one-time connect, the Pi can refresh tokens and re-sync without opening a browser again.
+
+#### Google Cloud Console (one-time)
+
+Use the same project as your YouTube Data API key, or create a new one:
+
+1. https://console.cloud.google.com → **Create project** (e.g. `ytdigest`)
+2. **APIs & Services → Library** → search **YouTube Data API v3** → **Enable**
+3. **APIs & Services → OAuth consent screen**
+   - User type: **External**
+   - Fill in the required app name / contact email
+   - **Publishing status can stay Testing** — you do not need to submit for verification
+   - Under **Test users**, add the Google account email you use for YouTube
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID**
+   - Application type: **Web application**
+   - **Authorized JavaScript origins:** leave empty
+   - **Authorized redirect URIs:** `http://127.0.0.1:8080/auth/youtube/callback`
+     (or your public URL + `/auth/youtube/callback` if using a domain)
+5. Copy the client ID and secret to `.env`:
+   
+   ```
+   YOUTUBE_OAUTH_CLIENT_ID=....apps.googleusercontent.com
+   YOUTUBE_OAUTH_CLIENT_SECRET=...
+   ```
+
+Also create a **YouTube Data API key** in the same project if you have not already (see
+[API keys](#api-keys-and-accounts) above).
+
+#### Option A — Public domain
+
+If the web UI is reachable at a stable public URL (e.g. `https://ytdigest.example.com`):
+
+```yaml
+web_host: 0.0.0.0
+web_port: 8080
+web_public_url: https://ytdigest.example.com
+```
+
+Register `https://ytdigest.example.com/auth/youtube/callback` as the redirect URI in Google Console. Start the web UI, open **Channels**, click **Connect & sync with YouTube**, and sign in with the test-user account.
+
+#### Option B — Local-first, then copy to Pi (recommended for home Pi)
+
+Do the OAuth dance on your dev machine, then deploy the resulting database to the Pi.
+
+1. On your dev machine, in `config.yaml`:
+   
+   ```yaml
+   web_host: 127.0.0.1
+   web_port: 8080
+   web_public_url: http://127.0.0.1:8080
+   ```
+2. Ensure `.env` has `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET`, and
+   `YOUTUBE_API_KEY`.
+3. Run locally:
+   
+   ```bash
+   ytdigest init-db
+   ytdigest web
+   ```
+4. Open http://127.0.0.1:8080/channels → **Connect & sync with YouTube** → sign in with the
+   Google account you added as a test user. Your subscriptions are imported into `data/ytdigest.db`.
+5. Copy to the Pi (first deployment — `scripts/deploy.sh` skips `data/`):
+   
+   ```bash
+   rsync -avz data/ "$PI:~/ytdigest/data/"
+   ```
+   
+   Copy `.env` to the Pi as well (same OAuth credentials are needed for token refresh and
+   re-sync). Run `seed` on the Pi if you have not already.
+
+After this, the Pi web UI can **Sync with YouTube** using the stored refresh token — no browser
+sign-in required on the Pi.
+
 ### Web UI (optional)
 
 The web UI runs on your home LAN and provides digest browsing, channel management, YouTube
 subscription sync, and a "Run now" button.
 
-1. Find your host's LAN IP: `hostname -I`
-2. Optionally set a **static DHCP reservation** so the IP stays stable
-3. Add to `config.yaml`:
+1. Add to `config.yaml` on the Pi:
+   
    ```yaml
    web_host: 0.0.0.0
    web_port: 8080
-   web_public_url: http://192.168.1.100:8080   # for OAuth redirect URI
    ```
-4. For YouTube subscription sync, create OAuth credentials in Google Cloud Console:
-   - **Credentials → Create credentials → OAuth client ID → Web application**
-   - Authorized redirect URI: `http://192.168.1.100:8080/auth/youtube/callback`
-   - Add `YOUTUBE_OAUTH_CLIENT_ID` and `YOUTUBE_OAUTH_CLIENT_SECRET` to `.env`
-5. Install and start:
+   
+   Do **not** set `web_public_url` to a LAN IP — it will not work for OAuth (see
+   [Connect YouTube account](#connect-youtube-account-advanced) above).
+2. Install and start:
+   
    ```bash
    sudo cp systemd/ytdigest-web.service /etc/systemd/system/
    # home setup only — patch User and paths
    sudo systemctl daemon-reload
    sudo systemctl enable --now ytdigest-web
    ```
-6. Open `http://192.168.1.100:8080` from any device on your LAN
+3. Open `http://<pi-lan-ip>:8080` from any device on your LAN
 
 `web_host: 0.0.0.0` means listen on all interfaces — you still access it via the LAN IP. It does
 not expose the UI to the internet (your router's NAT blocks inbound traffic).
@@ -407,13 +542,13 @@ YTDIGEST_DATA_DIR=~/ytdigest/data YTDIGEST_BACKUP_REMOTE=user@host:/path/ script
 
 ### Maintenance
 
-| Cadence | Task | Why |
-|---|---|---|
-| Monthly | `pip install -U yt-dlp` inside the venv | yt-dlp breaks whenever YouTube changes something. It is the most update-sensitive dependency. |
-| Monthly | Check `youtube-transcript-api` releases | Same cat-and-mouse game; the maintainer ships fixes when YouTube changes the caption endpoint. |
-| Monthly | Glance at the Google Cloud billing page | Should stay well under $1. Anything higher means a retry loop. |
-| Occasionally | `ytdigest status` | Watch `failed_permanent` counts and `consecutive_errors` per channel. |
-| If summaries stop arriving | `journalctl -u ytdigest --since yesterday` | The tool alerts on hard failures, but check the log before assuming it was a quiet day. |
+| Cadence                    | Task                                       | Why                                                                                            |
+| -------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Monthly                    | `pip install -U yt-dlp` inside the venv    | yt-dlp breaks whenever YouTube changes something. It is the most update-sensitive dependency.  |
+| Monthly                    | Check `youtube-transcript-api` releases    | Same cat-and-mouse game; the maintainer ships fixes when YouTube changes the caption endpoint. |
+| Monthly                    | Glance at the Google Cloud billing page    | Should stay well under $1. Anything higher means a retry loop.                                 |
+| Occasionally               | `ytdigest status`                          | Watch `failed_permanent` counts and `consecutive_errors` per channel.                          |
+| If summaries stop arriving | `journalctl -u ytdigest --since yesterday` | The tool alerts on hard failures, but check the log before assuming it was a quiet day.        |
 
 ### Troubleshooting
 

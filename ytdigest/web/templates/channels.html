@@ -8,19 +8,28 @@
 
   {% if not oauth_configured %}
   <div class="setup-notice">
-    <p>One-time setup: add OAuth credentials to <code>.env</code>, restart the server, then use the button below.</p>
+    <p>One-time setup: configure OAuth in Google Cloud Console, add credentials to <code>.env</code>,
+    set <code>web_public_url: http://127.0.0.1:8080</code> in <code>config.yaml</code>, restart
+    the server, then use the button below. See README for full steps.</p>
     <details open>
       <summary>Google Cloud Console steps</summary>
       <ol class="setup-steps">
-        <li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Credentials</a> (same project as your YouTube API key)</li>
-        <li>Configure the <strong>OAuth consent screen</strong> if prompted (External, add your email as test user)</li>
-        <li>Create <strong>OAuth client ID → Web application</strong></li>
-        <li>Add authorized redirect URI: <code>http://{{ request.headers.host }}/auth/youtube/callback</code></li>
+        <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Create a project</a> (or use your existing one)</li>
+        <li><strong>APIs &amp; Services → Library</strong> → enable <strong>YouTube Data API v3</strong></li>
+        <li><strong>OAuth consent screen</strong> → External → stay in <strong>Testing</strong> (no need to publish)</li>
+        <li>Add your YouTube Google account email under <strong>Test users</strong></li>
+        <li><strong>Credentials → Create OAuth client ID → Web application</strong></li>
+        <li><strong>Authorized JavaScript origins:</strong> leave empty</li>
+        <li><strong>Authorized redirect URI:</strong> <code>http://127.0.0.1:8080/auth/youtube/callback</code>
+          (LAN IPs like <code>192.168.x.x</code> will not work)</li>
         <li>Add to <code>.env</code> and restart <code>ytdigest web</code>:
           <pre>YOUTUBE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
 YOUTUBE_OAUTH_CLIENT_SECRET=your-client-secret</pre>
         </li>
       </ol>
+      <p class="meta"><strong>Pi users:</strong> connect locally on your dev machine first
+      (<code>web_public_url: http://127.0.0.1:8080</code>), authenticate once, then copy
+      <code>data/</code> to the Pi. See README.</p>
     </details>
   </div>
   {% elif oauth_error %}

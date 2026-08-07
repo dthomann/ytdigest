@@ -366,6 +366,19 @@ def restart_web_service(config: Config) -> str:
     return "Web service restarted"
 
 
+def restart_bot_service(config: Config) -> str:
+    privileged = os.geteuid() != 0
+    if privileged and not sudo_available():
+        raise SystemdError("sudo is not configured — see Settings for setup instructions")
+    bot = get_unit_status(UNIT_NAMES["bot"], "Telegram Q&A bot")
+    if not bot.installed:
+        return "Telegram Q&A bot not installed — skipped restart"
+    if not bot.active:
+        return "Telegram Q&A bot not running — skipped restart"
+    _systemctl("restart", "ytdigest-bot", privileged=privileged)
+    return "Telegram Q&A bot restarted"
+
+
 def install_bot_service(config: Config) -> str:
     ctx = install_context_from_config(config)
     content = render_unit(

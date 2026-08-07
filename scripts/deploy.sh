@@ -8,17 +8,26 @@
 #   YTDIGEST_PI=pi@192.168.1.100    SSH host (user@ip or ~/.ssh/config alias)
 #   YTDIGEST_REMOTE=~/ytdigest      install dir on the Pi
 #   YTDIGEST_PIP=1                    re-run pip install (only when requirements.txt changed)
-#   YTDIGEST_RESTART_WEB=0          skip systemctl restart
+#   YTDIGEST_RESTART_WEB=0          skip service restarts after deploy
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 _saved_pi="${YTDIGEST_PI:-}"
 
+# Load only YTDIGEST_* from .env (don't `source` the whole file — API keys often
+# use KEY= value spacing that bash interprets as a command).
 if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ROOT/.env"
-  set +a
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*(YTDIGEST_[A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      val="${BASH_REMATCH[2]}"
+      if [[ -z "${!key:-}" ]]; then
+        export "$key=$val"
+      fi
+    fi
+  done < "$ROOT/.env"
 fi
 
 if [[ -n "$_saved_pi" ]]; then
@@ -56,9 +65,10 @@ if [[ "${YTDIGEST_PIP:-}" == 1 ]]; then
 fi
 
 if [[ "${YTDIGEST_RESTART_WEB:-1}" == 1 ]]; then
-  echo "Restarting ytdigest-web..."
-  # Uses passwordless sudo for `ytdigest services *` (see systemd/ytdigest-sudoers.example).
-  ssh "$PI" "sudo -n ${REMOTE}/venv/bin/ytdigest --config ${REMOTE}/config.yaml services restart-web"
+  echo "Restarting ytdigest services..."
+  # Passwordless sudo for the exact ytdigest path (see systemd/ytdigest-sudoers.example).
+  # Sudoers user must match your SSH login — not necessarily "pi".
+  ssh "$PI" "d=${REMOTE}; d=\${d/#\\~/\$HOME}; y=\${d}/venv/bin/ytdigest; c=\${d}/config.yaml; sudo -n \"\$y\" --config \"\$c\" services restart-web; sudo -n \"\$y\" --config \"\$c\" services restart-bot"
 fi
 
 echo "Deploy complete: $(date -Iseconds)"

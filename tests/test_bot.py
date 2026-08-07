@@ -114,6 +114,81 @@ def test_handle_update_status_command(conn, config):
     assert sent and "Videos by state" in sent[0]
 
 
+def test_format_run_result():
+    from ytdigest import pipeline
+
+    text = bot_mod.format_run_result(
+        pipeline.RunResult(
+            run_id=7,
+            status="ok",
+            discovered=2,
+            summarized=1,
+            failed=0,
+            api_units=12,
+        )
+    )
+    assert "Run #7 finished status=ok" in text
+    assert "discovered=2 summarized=1" in text
+
+
+def test_start_pipeline_run_sends_completion_message(config, monkeypatch):
+    from ytdigest import pipeline
+
+    bot_mod._run_in_progress = False
+    sent = []
+
+    def post(url, json=None, timeout=None):
+        sent.append(json["text"])
+        return FakeTelegramResponse()
+
+    def fake_run_pipeline(conn, config):
+        return pipeline.RunResult(run_id=3, status="ok", discovered=1, summarized=1)
+
+    monkeypatch.setattr("ytdigest.bot.pipeline.run_pipeline", fake_run_pipeline)
+    msg = bot_mod.start_pipeline_run(config, "tok", "12345", post_fn=post)
+    assert msg == "Pipeline run started…"
+
+    for _ in range(50):
+        if sent:
+            break
+        threading.Event().wait(0.05)
+    assert any("Run #3 finished status=ok" in text for text in sent)
+    bot_mod._run_in_progress = False
+
+
+def test_start_pipeline_run_rejects_concurrent_start(config, monkeypatch):
+    bot_mod._run_in_progress = True
+    try:
+        msg = bot_mod.start_pipeline_run(config, "tok", "12345")
+    finally:
+        bot_mod._run_in_progress = False
+    assert msg == "A run is already in progress."
+
+
+def test_handle_update_run_command(conn, config, monkeypatch):
+    config.secrets["TELEGRAM_ALLOWED_CHAT_ID"] = "12345"
+    sent = []
+
+    def post(url, json=None, timeout=None):
+        sent.append(json["text"])
+        return FakeTelegramResponse()
+
+    monkeypatch.setattr(
+        "ytdigest.bot.start_pipeline_run",
+        lambda config, bot_token, chat_id, post_fn=None: "Pipeline run started…",
+    )
+    bot_mod.handle_update(
+        make_update("12345", "/run"),
+        config,
+        conn,
+        "tok",
+        "12345",
+        "gemini-key",
+        post_fn=post,
+    )
+    assert sent == ["Pipeline run started…"]
+
+
 def test_handle_update_reply_to_digest_message(conn, config, monkeypatch):
     config.secrets["TELEGRAM_ALLOWED_CHAT_ID"] = "12345"
     insert_channel(conn, "UC1", title="Chan")

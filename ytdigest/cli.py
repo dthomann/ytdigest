@@ -428,6 +428,8 @@ def cmd_services(args) -> None:
             print(systemd_units.uninstall_web_service(config))
         elif action == "restart-web":
             print(systemd_units.restart_web_service(config))
+        elif action == "restart-bot":
+            print(systemd_units.restart_bot_service(config))
         elif action == "install-timer":
             print(systemd_units.install_timer_service(config))
         elif action == "uninstall-timer":
@@ -570,6 +572,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_uninstall_web.set_defaults(func=cmd_services)
     p_restart_web = svc.add_parser("restart-web", help="restart ytdigest-web.service")
     p_restart_web.set_defaults(func=cmd_services)
+    p_restart_bot = svc.add_parser("restart-bot", help="restart ytdigest-bot.service if running")
+    p_restart_bot.set_defaults(func=cmd_services)
     p_install_timer = svc.add_parser("install-timer", help="install and enable ytdigest.timer")
     p_install_timer.set_defaults(func=cmd_services)
     p_uninstall_timer = svc.add_parser("uninstall-timer", help="disable and remove ytdigest.timer")

@@ -159,6 +159,65 @@ def test_restart_web_service_skips_when_not_installed(mock_sudo, mock_status, in
 
 
 @patch("ytdigest.systemd_units._systemctl")
+@patch("ytdigest.systemd_units.get_unit_status")
+@patch("ytdigest.systemd_units.sudo_available", return_value=True)
+def test_restart_bot_service(mock_sudo, mock_status, mock_systemctl, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    from ytdigest.systemd_units import restart_bot_service
+
+    mock_status.return_value = UnitStatus(
+        name="ytdigest-bot.service",
+        label="Telegram Q&A bot",
+        installed=True,
+        enabled=True,
+        active=True,
+        detail=None,
+    )
+    message = restart_bot_service(config)
+    assert "restarted" in message.lower()
+    mock_systemctl.assert_called_once_with("restart", "ytdigest-bot", privileged=True)
+
+
+@patch("ytdigest.systemd_units.get_unit_status")
+@patch("ytdigest.systemd_units.sudo_available", return_value=True)
+def test_restart_bot_service_skips_when_not_installed(mock_sudo, mock_status, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    from ytdigest.systemd_units import restart_bot_service
+
+    mock_status.return_value = UnitStatus(
+        name="ytdigest-bot.service",
+        label="Telegram Q&A bot",
+        installed=False,
+        enabled=None,
+        active=None,
+        detail="not installed",
+    )
+    message = restart_bot_service(config)
+    assert "skipped" in message.lower()
+
+
+@patch("ytdigest.systemd_units.get_unit_status")
+@patch("ytdigest.systemd_units.sudo_available", return_value=True)
+def test_restart_bot_service_skips_when_not_running(mock_sudo, mock_status, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    from ytdigest.systemd_units import restart_bot_service
+
+    mock_status.return_value = UnitStatus(
+        name="ytdigest-bot.service",
+        label="Telegram Q&A bot",
+        installed=True,
+        enabled=True,
+        active=False,
+        detail=None,
+    )
+    message = restart_bot_service(config)
+    assert "not running" in message.lower()
+
+
+@patch("ytdigest.systemd_units._systemctl")
 @patch("ytdigest.systemd_units._daemon_reload")
 @patch("ytdigest.systemd_units._write_unit_file")
 @patch("ytdigest.systemd_units.sudo_available", return_value=True)
