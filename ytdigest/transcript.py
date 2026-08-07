@@ -37,7 +37,7 @@ from youtube_transcript_api import (
 )
 
 from .models import VideoState
-from .util import collapse_whitespace, jittered_sleep, utcnow_iso
+from .util import collapse_whitespace, is_youtube_video_id, jittered_sleep, utcnow_iso
 
 logger = logging.getLogger("ytdigest")
 
@@ -347,6 +347,8 @@ GROQ_MAX_BYTES = 25 * 1024 * 1024  # Groq's free-tier request size limit
 
 
 def _download_audio(video_id: str, out_dir: Path) -> Path:
+    if not is_youtube_video_id(video_id):
+        raise ValueError(f"invalid video_id: {video_id!r}")
     out_template = str(out_dir / f"{video_id}.%(ext)s")
     subprocess.run(
         [

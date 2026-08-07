@@ -12,7 +12,7 @@ def oauth_configured(config: Config) -> bool:
     )
 
 
-def oauth_config_from_request(config: Config, request) -> youtube_oauth.OAuthConfig | None:
+def oauth_config_from_request(config: Config, _request) -> youtube_oauth.OAuthConfig | None:
     client_id = config.secrets.get("YOUTUBE_OAUTH_CLIENT_ID")
     client_secret = config.secrets.get("YOUTUBE_OAUTH_CLIENT_SECRET")
     if not client_id or not client_secret:
@@ -21,8 +21,8 @@ def oauth_config_from_request(config: Config, request) -> youtube_oauth.OAuthCon
     if public_url:
         redirect_uri = public_url.rstrip("/") + "/auth/youtube/callback"
     else:
-        host = request.headers.get("host", f"localhost:{config.web_port}")
-        redirect_uri = f"http://{host}/auth/youtube/callback"
+        # Never derive redirect URIs from the Host header — that enables header injection.
+        redirect_uri = f"http://127.0.0.1:{config.web_port}/auth/youtube/callback"
     return youtube_oauth.OAuthConfig(
         client_id=client_id,
         client_secret=client_secret,

@@ -13,7 +13,7 @@ from ..services.sync_flash import load_and_clear_sync_flash, save_sync_flash
 from ..services.youtube_sync import run_youtube_sync
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
-from scripts.resolve_channels import resolve_one  # noqa: E402
+from scripts.resolve_channels import is_channel_id, resolve_one  # noqa: E402
 
 router = APIRouter(prefix="/channels")
 
@@ -61,12 +61,13 @@ def youtube_sync_start(request: Request):
     if not connected:
         return RedirectResponse("/auth/youtube/start", status_code=303)
 
-    return RedirectResponse("/channels/youtube-sync/run", status_code=303)
+    templates = request.app.state.templates
+    return templates.TemplateResponse(request, "youtube_sync_submit.html", {})
 
 
-@router.get("/youtube-sync/run")
+@router.post("/youtube-sync/run")
 def youtube_sync_run(request: Request):
-    """Run sync for an already-connected account (browser redirect flow)."""
+    """Run sync for an already-connected account."""
     config = request.app.state.config
     oauth_cfg = oauth_config_from_request(config, request)
     if oauth_cfg is None:
@@ -100,6 +101,8 @@ def add_channel(request: Request, channel_input: str = Form(...)):
 
 @router.post("/{channel_id}/toggle")
 def toggle_channel(request: Request, channel_id: str, enabled: str = Form(...)):
+    if not is_channel_id(channel_id):
+        raise HTTPException(status_code=400, detail="Invalid channel ID")
     enabled_bool = enabled.lower() == "true"
     conn = db.connect(request.app.state.config.db_path)
     try:
@@ -112,6 +115,8 @@ def toggle_channel(request: Request, channel_id: str, enabled: str = Form(...)):
 
 @router.post("/{channel_id}/remove")
 def remove_channel_route(request: Request, channel_id: str):
+    if not is_channel_id(channel_id):
+        raise HTTPException(status_code=400, detail="Invalid channel ID")
     conn = db.connect(request.app.state.config.db_path)
     try:
         if not channels_mod.remove_channel(conn, channel_id):

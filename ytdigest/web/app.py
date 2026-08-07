@@ -10,8 +10,9 @@ from starlette.templating import Jinja2Templates
 
 from ..config import Config
 from .. import db
-from .routes import auth, channels, digest, runs, settings
+from .routes import auth, channels, digest, login, runs, settings
 from .services.run_manager import RunManager
+from .auth import install_auth_middleware, warn_if_unauthenticated_exposure
 
 WEB_DIR = Path(__file__).parent
 TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
@@ -32,10 +33,14 @@ def create_app(config: Config) -> FastAPI:
     static_dir.mkdir(exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    app.include_router(login.router)
     app.include_router(runs.router)
     app.include_router(digest.router)
     app.include_router(channels.router)
     app.include_router(auth.router)
     app.include_router(settings.router)
+
+    install_auth_middleware(app, config)
+    warn_if_unauthenticated_exposure(config)
 
     return app

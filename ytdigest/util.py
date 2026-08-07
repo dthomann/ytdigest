@@ -4,8 +4,11 @@ from __future__ import annotations
 import functools
 import logging
 import random
+import re
 import time
 from datetime import datetime, timezone
+
+YT_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 logger = logging.getLogger("ytdigest")
 
@@ -55,3 +58,7 @@ def retry(times: int = 3, exceptions: tuple = (Exception,), backoff_base: float 
 
 def collapse_whitespace(text: str) -> str:
     return " ".join(text.split())
+
+
+def is_youtube_video_id(value: str) -> bool:
+    return bool(YT_VIDEO_ID_RE.match(value))

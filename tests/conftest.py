@@ -21,6 +21,7 @@ _ENV_KEYS = (
     "TELEGRAM_ALLOWED_CHAT_ID",
     "YOUTUBE_OAUTH_CLIENT_ID",
     "YOUTUBE_OAUTH_CLIENT_SECRET",
+    "WEB_AUTH_TOKEN",
 )
 
 
@@ -96,6 +97,7 @@ def config(tmp_path):
             "TELEGRAM_ALLOWED_CHAT_ID": "",
             "YOUTUBE_OAUTH_CLIENT_ID": "",
             "YOUTUBE_OAUTH_CLIENT_SECRET": "",
+            "WEB_AUTH_TOKEN": "",
         },
         config_path=None,
     )

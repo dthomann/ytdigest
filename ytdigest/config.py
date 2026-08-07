@@ -143,6 +143,7 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path | 
         "TELEGRAM_ALLOWED_CHAT_ID": os.environ.get("TELEGRAM_ALLOWED_CHAT_ID", ""),
         "YOUTUBE_OAUTH_CLIENT_ID": os.environ.get("YOUTUBE_OAUTH_CLIENT_ID", ""),
         "YOUTUBE_OAUTH_CLIENT_SECRET": os.environ.get("YOUTUBE_OAUTH_CLIENT_SECRET", ""),
+        "WEB_AUTH_TOKEN": os.environ.get("WEB_AUTH_TOKEN", ""),
     }
 
     channel = values["delivery_channel"]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -13,7 +14,21 @@ from ..services.youtube_sync import run_youtube_sync
 
 router = APIRouter(prefix="/auth/youtube")
 
-_oauth_states: dict[str, bool] = {}
+_oauth_states: dict[str, float] = {}
+_OAUTH_STATE_TTL_SECONDS = 600
+
+
+def _store_oauth_state(state: str) -> None:
+    now = time.time()
+    expired = [key for key, expires_at in _oauth_states.items() if expires_at <= now]
+    for key in expired:
+        del _oauth_states[key]
+    _oauth_states[state] = now + _OAUTH_STATE_TTL_SECONDS
+
+
+def _consume_oauth_state(state: str) -> bool:
+    expires_at = _oauth_states.pop(state, None)
+    return expires_at is not None and expires_at > time.time()
 
 
 @router.get("/start")
@@ -27,7 +42,7 @@ def oauth_start(request: Request):
         return RedirectResponse("/channels?oauth_setup=1", status_code=303)
 
     state = secrets.token_urlsafe(16)
-    _oauth_states[state] = True
+    _store_oauth_state(state)
     url = youtube_oauth.authorization_url(oauth_cfg, state)
     return RedirectResponse(url)
 
@@ -41,9 +56,8 @@ def oauth_callback(
 ):
     if error:
         return RedirectResponse(f"/channels?oauth_error={error}", status_code=303)
-    if not code or not state or state not in _oauth_states:
+    if not code or not state or not _consume_oauth_state(state):
         raise HTTPException(status_code=400, detail="Invalid OAuth callback")
-    del _oauth_states[state]
 
     config = request.app.state.config
     oauth_cfg = oauth_config_from_request(config, request)

@@ -36,10 +36,6 @@ class RunManager:
             return self._message
 
     def start(self) -> tuple[bool, str]:
-        with self._lock:
-            if self._state == "running":
-                return False, "A run is already in progress"
-
         def _run():
             conn = db.connect(self.config.db_path)
             try:
@@ -67,6 +63,8 @@ class RunManager:
                 conn.close()
 
         with self._lock:
+            if self._state == "running":
+                return False, "A run is already in progress"
             self._state = "running"
             self._run_id = None
             self._message = "Pipeline running…"

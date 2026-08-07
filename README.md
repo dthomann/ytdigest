@@ -4,6 +4,35 @@ Self-hosted daily YouTube digest for a Raspberry Pi (or any Linux box): watches 
 channels, fetches transcripts for new long-form videos, summarizes each in one paragraph, and
 delivers a digest to Telegram — with follow-up Q&A per video.
 
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+- [First run](#first-run)
+- [CLI](#cli)
+- [Telegram bot](#telegram-bot)
+  - [Asking questions](#asking-questions)
+  - [Commands](#commands)
+  - [Running the bot](#running-the-bot)
+- [Configuration reference (`config.yaml`)](#configuration-reference-configyaml)
+- [Web UI security (optional)](#web-ui-security-optional)
+- [Secrets (`.env`, chmod 600)](#secrets-env-chmod-600)
+- [Production setup (Raspberry Pi)](#production-setup-raspberry-pi)
+  - [Pi baseline](#pi-baseline)
+  - [Data directory](#data-directory)
+  - [Install location](#install-location)
+  - [API keys and accounts](#api-keys-and-accounts)
+  - [Deploy code updates](#deploy-code-updates)
+  - [Seed on the Pi](#seed-on-the-pi)
+  - [systemd](#systemd)
+  - [Connect YouTube account (advanced)](#connect-youtube-account-advanced)
+  - [Web UI (optional)](#web-ui-optional)
+  - [Backups](#backups)
+  - [Maintenance](#maintenance)
+  - [Troubleshooting](#troubleshooting)
+- [Testing](#testing)
+- [Known limitation](#known-limitation)
+
 ## Features
 
 - RSS discovery with YouTube Data API metadata and Shorts/livestream classification
@@ -11,7 +40,7 @@ delivers a digest to Telegram — with follow-up Q&A per video.
 - Gemini summarization with map-reduce for long videos
 - Telegram delivery (one message per video) with MarkdownV2 formatting
 - Reply-based Q&A grounded in timestamped transcripts, with `?t=` deep links
-- Optional LAN web UI for browsing digests, managing channels, and triggering runs
+- Optional LAN web UI for browsing digests, managing channels, and triggering runs (optional token login for LAN exposure)
 - Offline test suite with recorded fixtures
 
 ## Install
@@ -171,17 +200,58 @@ Secrets never go here — see `.env.example`. Unknown keys and any key that look
 | `web_port`                        | `8080`                  | Web UI port.                                                                                                                                              |
 | `web_public_url`                  | `null`                  | OAuth redirect base URL. Required for YouTube connect — use `http://127.0.0.1:8080` for local-first setup (see below).                                    |
 
+## Web UI security (optional)
+
+The web UI has no login by default. That is fine when you bind to loopback only (`web_host:
+127.0.0.1`) or trust everyone on your LAN. If the UI listens on `0.0.0.0` (the default), anyone
+who can reach port 8080 can manage channels, trigger pipeline runs, and — when passwordless sudo is
+configured — install or remove systemd services from **Settings**.
+
+Set `WEB_AUTH_TOKEN` in `.env` to require sign-in:
+
+```bash
+openssl rand -hex 32   # generate a strong token
+```
+
+```env
+WEB_AUTH_TOKEN=your-generated-token
+```
+
+Restart `ytdigest web` (or the `ytdigest-web` systemd unit). Open the UI — you are redirected to
+`/auth/login`. Enter the token once; the browser keeps an HttpOnly cookie for 30 days.
+
+Auth is optional: leave `WEB_AUTH_TOKEN` empty and the UI works exactly as before (no login
+prompt). When the UI is exposed on the network without a token, a warning is logged at startup.
+
+**Programmatic access** (same token):
+
+- `Authorization: Bearer <token>` header
+- `X-YTDigest-Token: <token>` header
+
+**Recommendations by setup:**
+
+| Setup | Suggested |
+| ----- | --------- |
+| Dev machine, `web_host: 127.0.0.1` | No token needed |
+| Pi on LAN, `web_host: 0.0.0.0` | Set `WEB_AUTH_TOKEN` |
+| Public domain | Set `WEB_AUTH_TOKEN` and use HTTPS in front (reverse proxy) |
+
+OAuth redirect URIs are never derived from the `Host` header — they use `web_public_url` when set,
+otherwise `http://127.0.0.1:<web_port>` (see [Connect YouTube account](#connect-youtube-account-advanced)).
+
 ## Secrets (`.env`, chmod 600)
 
 `YOUTUBE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_ALLOWED_CHAT_ID`, `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET` — see
-`.env.example`. OAuth credentials are only needed for YouTube subscription sync via the web UI;
+`TELEGRAM_ALLOWED_CHAT_ID`, `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET`,
+`WEB_AUTH_TOKEN` (optional — web UI login) — see `.env.example`. OAuth credentials are only needed
+for YouTube subscription sync via the web UI;
 see [Connect YouTube account](#connect-youtube-account-advanced). `YOUTUBE_API_KEY` is required for metadata lookups (and for resolving @handles).
 `GEMINI_API_KEY` is required to summarize — without it, `run` and `summarize` skip that phase, log
 a note, and the video stays queued at `has_transcript` for next time. `GROQ_API_KEY` is only needed
 if `enable_whisper_fallback: true`. `delivery_channel: telegram` requires the two Telegram
 variables; failure alerts also use them regardless of the configured delivery channel. The config
-loader fails loudly and immediately if a required secret is missing.
+loader fails loudly and immediately if a required secret is missing. `WEB_AUTH_TOKEN` is never
+required — see [Web UI security](#web-ui-security-optional).
 
 ## Production setup (Raspberry Pi)
 
@@ -323,6 +393,7 @@ TELEGRAM_BOT_TOKEN=...
 TELEGRAM_ALLOWED_CHAT_ID=...
 YOUTUBE_OAUTH_CLIENT_ID=...
 YOUTUBE_OAUTH_CLIENT_SECRET=...
+WEB_AUTH_TOKEN=...          # optional — recommended when web_host is 0.0.0.0
 EOF
 chmod 600 ~/ytdigest/.env
 ```
@@ -338,6 +409,7 @@ TELEGRAM_BOT_TOKEN=...
 TELEGRAM_ALLOWED_CHAT_ID=...
 YOUTUBE_OAUTH_CLIENT_ID=...
 YOUTUBE_OAUTH_CLIENT_SECRET=...
+WEB_AUTH_TOKEN=...          # optional — recommended when web_host is 0.0.0.0
 EOF
 sudo chmod 600 /opt/ytdigest/.env
 sudo chown ytdigest:ytdigest /opt/ytdigest/.env
@@ -517,7 +589,9 @@ subscription sync, and a "Run now" button.
    
    Do **not** set `web_public_url` to a LAN IP — it will not work for OAuth (see
    [Connect YouTube account](#connect-youtube-account-advanced) above).
-2. Install and start:
+2. Set `WEB_AUTH_TOKEN` in `.env` on the Pi (recommended whenever `web_host` is `0.0.0.0`). See
+   [Web UI security](#web-ui-security-optional).
+3. Install and start:
    
    ```bash
    sudo cp systemd/ytdigest-web.service /etc/systemd/system/
@@ -525,7 +599,8 @@ subscription sync, and a "Run now" button.
    sudo systemctl daemon-reload
    sudo systemctl enable --now ytdigest-web
    ```
-3. Open `http://<pi-lan-ip>:8080` from any device on your LAN
+4. Open `http://<pi-lan-ip>:8080` from any device on your LAN. Sign in at `/auth/login` if you
+   configured `WEB_AUTH_TOKEN`.
 
 `web_host: 0.0.0.0` means listen on all interfaces — you still access it via the LAN IP. It does
 not expose the UI to the internet (your router's NAT blocks inbound traffic).

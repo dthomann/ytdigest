@@ -40,13 +40,15 @@ YOUTUBE_OAUTH_CLIENT_SECRET=your-client-secret</pre>
     {% include "partials/sync_results.html" %}
   {% endif %}
 
-  {% if oauth_configured %}
+    {% if oauth_configured %}
     {% if youtube_connected %}
     <p class="success">Connected to YouTube</p>
+    <form method="post" action="/channels/youtube-sync/run" class="inline">
+      <button type="submit" class="btn btn-primary">Sync with YouTube</button>
+    </form>
+    {% else %}
+    <a href="/channels/youtube-sync" class="btn btn-primary">Connect &amp; sync with YouTube</a>
     {% endif %}
-    <a href="/channels/youtube-sync" class="btn btn-primary">
-      {% if youtube_connected %}Sync with YouTube{% else %}Connect &amp; sync with YouTube{% endif %}
-    </a>
     <p class="meta">Opens Google sign-in if needed, then imports your subscriptions (sync-down only).</p>
   {% else %}
     <button class="btn btn-primary" disabled title="Add OAuth credentials to .env first">Connect &amp; sync with YouTube</button>
