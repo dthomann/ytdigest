@@ -5,7 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ytdigest"
 version = "0.1.0"
+description = "Self-hosted daily YouTube digest with transcripts, summaries, and Telegram delivery"
 requires-python = ">=3.11"
+license = "MIT"
 
 [project.scripts]
 ytdigest = "ytdigest.cli:main"

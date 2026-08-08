@@ -41,6 +41,6 @@ delivery_channel: stdout          # telegram | stdout | file
 telegram_message_delay_seconds: 1
 
 # --- web UI ---
-web_host: 0.0.0.0                  # bind address — accepts LAN connections on any interface
+web_host: 127.0.0.1                  # bind address — accepts LAN connections on any interface
 web_port: 8080
 web_public_url: null               # OAuth redirect base — http://127.0.0.1:8080 for local-first setup

@@ -4,5 +4,5 @@
 # Dedicated user (/opt/ytdigest):
 # ytdigest ALL=(root) NOPASSWD: /opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml services *
 #
-# Home setup — use the same Unix user you SSH in as (here: dom):
-# dom ALL=(root) NOPASSWD: /home/dom/ytdigest/venv/bin/ytdigest --config /home/dom/ytdigest/config.yaml services *
+# Home setup — use the same Unix user you SSH in as (here: user):
+# user ALL=(root) NOPASSWD: /home/user/ytdigest/venv/bin/ytdigest --config /home/user/ytdigest/config.yaml services *
