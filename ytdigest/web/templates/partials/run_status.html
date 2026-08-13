@@ -10,7 +10,6 @@
   <form hx-post="/runs/reset" hx-target="#run-status" hx-swap="innerHTML" class="inline">
     <button type="submit" class="btn btn-sm">Dismiss</button>
   </form>
-  <a href="/" class="link">Refresh digest</a>
   {% elif run_state == "error" %}
   <span class="error">{{ run_message or "Run failed" }}</span>
   <form hx-post="/runs/reset" hx-target="#run-status" hx-swap="innerHTML" class="inline">
@@ -18,3 +17,8 @@
   </form>
   {% endif %}
 </div>
+{% if include_digest_oob %}
+<div id="digest" hx-swap-oob="true">
+  {% include "partials/digest_body.html" %}
+</div>
+{% endif %}

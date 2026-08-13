@@ -67,6 +67,18 @@ def test_format_video_message_contains_escaped_tricky_title():
     assert "https://youtu\\.be/abc\\-123\\_XYZ" in text
 
 
+def test_format_header_truncates_long_warning_list():
+    digest = Digest(
+        date="2026-08-13",
+        warnings=[f"channel {i} failed" for i in range(12)],
+    )
+    text = format_header_message(digest, "UTC")
+    assert "channel 0 failed" in text
+    assert "channel 7 failed" in text
+    assert "channel 8 failed" not in text
+    assert "and 4 more" in text
+
+
 def test_format_live_announcement_never_includes_summary():
     entry = VideoEntry(
         video_id="v1", title="Q&A", channel_title="Chan",

@@ -9,7 +9,7 @@ digest_hour: 6                    # local hour (0-23) the daily run/timer is int
 
 # --- discovery ---
 rss_delay_seconds: [1, 2]         # jittered sleep range between RSS feed polls
-max_channel_consecutive_errors: 10 # warn in digest once a channel's error streak reaches this
+max_channel_consecutive_errors: 10 # after this many consecutive poll failures, mark the channel as likely dead in the warning text; any failed poll is already reported
 
 # --- classification ---
 min_duration_seconds: 180         # videos at/under this duration are skipped as Shorts

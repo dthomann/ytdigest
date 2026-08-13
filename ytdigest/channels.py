@@ -124,3 +124,28 @@ def remove_channel(conn: sqlite3.Connection, channel_id: str) -> bool:
     cur = conn.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id,))
     conn.commit()
     return cur.rowcount > 0
+
+
+def format_unhealthy_channel_lines(conn: sqlite3.Connection) -> list[str]:
+    """One WARNING line per channel with consecutive_errors > 0 (CLI + Telegram /status)."""
+    rows = conn.execute(
+        """
+        SELECT channel_id, title, consecutive_errors, last_error
+        FROM channels
+        WHERE consecutive_errors > 0
+        ORDER BY consecutive_errors DESC, COALESCE(title, channel_id) COLLATE NOCASE
+        """
+    ).fetchall()
+    lines = []
+    for row in rows:
+        label = row["title"] or row["channel_id"]
+        suffix = ""
+        err = (row["last_error"] or "").strip().replace("\n", " ")
+        if err:
+            if len(err) > 80:
+                err = err[:77] + "..."
+            suffix = f" ({err})"
+        lines.append(
+            f"WARNING: {label} — {row['consecutive_errors']} consecutive errors{suffix}"
+        )
+    return lines

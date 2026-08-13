@@ -220,6 +220,12 @@ def run_pipeline(
             discover_result, upcoming_ids, quota_error, api_units = discover_metadata_classify(
                 conn, config
             )
+            if discover_result.channels_failed:
+                status = "partial"
+                notes.append(
+                    f"{discover_result.channels_failed}/{discover_result.channels_polled} "
+                    "channels failed RSS poll after retry"
+                )
             if discover_result.dead_channel_warnings:
                 notes.extend(discover_result.dead_channel_warnings)
             if quota_error:

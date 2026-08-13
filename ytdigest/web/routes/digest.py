@@ -25,6 +25,7 @@ def index(request: Request):
         run = get_latest_run(conn)
         sections = get_run_sections(conn, run.id) if run else {}
         run_mgr = request.app.state.run_manager
+        run_mgr.consume_pending_digest_refresh()
         return templates.TemplateResponse(
             request,
             "index.html",
@@ -33,6 +34,7 @@ def index(request: Request):
                 "sections": sections,
                 "run_state": run_mgr.state,
                 "run_message": run_mgr.message,
+                "include_digest_oob": False,
             },
         )
     finally:

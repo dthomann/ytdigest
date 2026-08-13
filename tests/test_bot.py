@@ -47,17 +47,30 @@ def test_parse_command():
 
 
 def test_format_status(conn):
-    insert_channel(conn, "UC1")
+    insert_channel(conn, "UC1", title="Healthy")
+    insert_channel(conn, "UC2", title="Andrew Steele")
     conn.execute(
         "INSERT INTO videos (video_id, channel_id, state, discovered_at, updated_at) "
         "VALUES ('v1', 'UC1', ?, 'now', 'now')",
         (VideoState.DELIVERED.value,),
     )
-    conn.execute("INSERT INTO runs (started_at, status, discovered) VALUES ('now', 'ok', 1)")
+    conn.execute(
+        "UPDATE channels SET consecutive_errors = 2, last_error = 'HTTPSConnectionPool timeout' "
+        "WHERE channel_id = 'UC2'"
+    )
+    conn.execute(
+        "INSERT INTO runs (started_at, status, discovered, notes) "
+        "VALUES ('now', 'partial', 5, '46/59 channels failed RSS poll after retry')"
+    )
     conn.commit()
     text = bot_mod.format_status(conn)
     assert "delivered: 1" in text
     assert "Last run:" in text
+    assert "WARNING: Andrew Steele — 2 consecutive errors" in text
+    assert "timeout" in text
+    assert "1 with poll errors" in text
+    assert "Notes: 46/59 channels failed RSS poll after retry" in text
+    assert "WARNING: Healthy" not in text
 
 
 def test_cmd_retry_resets_failed_video(conn):
@@ -129,6 +142,26 @@ def test_format_run_result():
     )
     assert "Run #7 finished status=ok" in text
     assert "discovered=2 summarized=1" in text
+
+
+def test_format_run_result_includes_channel_failures():
+    from ytdigest import pipeline
+
+    text = bot_mod.format_run_result(
+        pipeline.RunResult(
+            run_id=23,
+            status="partial",
+            discovered=5,
+            summarized=0,
+            notes=[
+                "46/59 channels failed RSS poll after retry",
+                "Andrew Steele (UCxxx) poll failed (2 consecutive): timeout",
+            ],
+        )
+    )
+    assert "status=partial" in text
+    assert "46/59 channels failed RSS poll after retry" in text
+    assert "Andrew Steele" in text
 
 
 def test_start_pipeline_run_sends_completion_message(config, monkeypatch):

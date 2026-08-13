@@ -23,7 +23,11 @@ def report_run_issues(
 
     header = f"run #{run_id} status={status}"
     if notes:
-        body = "\n".join(f"• {n}" for n in notes)
+        shown = notes[:8]
+        body = "\n".join(f"• {n}" for n in shown)
+        extra = len(notes) - len(shown)
+        if extra:
+            body += f"\n• … and {extra} more (see /status)"
         message = f"{header}\n{body}"
     else:
         message = header

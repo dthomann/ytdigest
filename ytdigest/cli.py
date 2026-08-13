@@ -351,12 +351,9 @@ def cmd_status(args) -> None:
     print("Channels:")
     total = conn.execute("SELECT COUNT(*) AS n FROM channels").fetchone()["n"]
     enabled = conn.execute("SELECT COUNT(*) AS n FROM channels WHERE enabled = 1").fetchone()["n"]
-    errored = conn.execute(
-        "SELECT channel_id, title, consecutive_errors FROM channels WHERE consecutive_errors > 0"
-    ).fetchall()
     print(f"  {enabled}/{total} enabled")
-    for row in errored:
-        print(f"  WARNING: {row['title'] or row['channel_id']} — {row['consecutive_errors']} consecutive errors")
+    for line in channels_mod.format_unhealthy_channel_lines(conn):
+        print(f"  {line}")
 
     print()
     last_run = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()

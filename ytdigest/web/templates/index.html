@@ -11,40 +11,7 @@
   </div>
 </section>
 
-{% if run %}
-<section class="run-meta">
-  <p>Run #{{ run.id }} · {{ run.started_at[:10] }} · {{ run.summarized }} summarized · status {{ run.status }}</p>
-  <a href="/runs/{{ run.id }}" class="link">View full run</a>
-  <a href="/runs" class="link">Older runs</a>
-</section>
-{% else %}
-<p class="empty">No runs yet. Import channels and run the pipeline.</p>
-{% endif %}
-
-{% if sections.new_videos %}
-<h2 class="section-title">New videos</h2>
-<div class="cards">
-  {% for video in sections.new_videos %}
-    {% include "partials/video_card.html" %}
-  {% endfor %}
+<div id="digest">
+  {% include "partials/digest_body.html" %}
 </div>
-{% endif %}
-
-{% if sections.live_announcements %}
-<h2 class="section-title">Upcoming livestreams</h2>
-<div class="cards">
-  {% for video in sections.live_announcements %}
-    {% include "partials/video_card.html" %}
-  {% endfor %}
-</div>
-{% endif %}
-
-{% if sections.failed_transcripts %}
-<h2 class="section-title">Transcript failures</h2>
-<div class="cards">
-  {% for video in sections.failed_transcripts %}
-    {% include "partials/video_card.html" %}
-  {% endfor %}
-</div>
-{% endif %}
 {% endblock %}

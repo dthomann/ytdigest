@@ -18,6 +18,7 @@ class RunManager:
         self._state = "idle"
         self._run_id: int | None = None
         self._message: str | None = None
+        self._pending_digest_refresh = False
         self._thread: threading.Thread | None = None
 
     @property
@@ -43,6 +44,7 @@ class RunManager:
                 with self._lock:
                     self._state = "finished"
                     self._run_id = result.run_id
+                    self._pending_digest_refresh = True
                     if result.notes:
                         preview = "; ".join(result.notes[:5])
                         if len(result.notes) > 5:
@@ -68,9 +70,18 @@ class RunManager:
             self._state = "running"
             self._run_id = None
             self._message = "Pipeline running…"
+            self._pending_digest_refresh = False
             self._thread = threading.Thread(target=_run, daemon=True)
             self._thread.start()
         return True, "Run started"
+
+    def consume_pending_digest_refresh(self) -> bool:
+        """Return True once after a successful run, so the UI can swap in the latest digest."""
+        with self._lock:
+            if self._pending_digest_refresh:
+                self._pending_digest_refresh = False
+                return True
+            return False
 
     def reset(self) -> None:
         with self._lock:
@@ -78,3 +89,4 @@ class RunManager:
                 self._state = "idle"
                 self._run_id = None
                 self._message = None
+                self._pending_digest_refresh = False

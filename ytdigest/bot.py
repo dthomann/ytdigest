@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from . import db, pipeline, qa
+from . import channels as channels_mod, db, pipeline, qa
 from .deliver import TELEGRAM_API
 from .models import VideoState
 from .run_lock import RunInProgressError
@@ -93,6 +93,9 @@ def get_updates(bot_token: str, offset: int = 0, timeout: int = 30, get_fn=None)
     return data.get("result") or []
 
 
+TELEGRAM_TEXT_LIMIT = 4096
+
+
 def format_status(conn: sqlite3.Connection) -> str:
     lines = ["Videos by state:"]
     for row in conn.execute("SELECT state, COUNT(*) AS n FROM videos GROUP BY state ORDER BY n DESC"):
@@ -100,7 +103,12 @@ def format_status(conn: sqlite3.Connection) -> str:
 
     total = conn.execute("SELECT COUNT(*) AS n FROM channels").fetchone()["n"]
     enabled = conn.execute("SELECT COUNT(*) AS n FROM channels WHERE enabled = 1").fetchone()["n"]
+    warnings = channels_mod.format_unhealthy_channel_lines(conn)
     lines.append(f"\nChannels: {enabled}/{total} enabled")
+    if warnings:
+        lines.append(f"{len(warnings)} with poll errors:")
+        for line in warnings:
+            lines.append(f"  {line}")
 
     last_run = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
     if last_run:
@@ -109,6 +117,8 @@ def format_status(conn: sqlite3.Connection) -> str:
             f"status={last_run['status']} discovered={last_run['discovered']} "
             f"summarized={last_run['summarized']} api_units={last_run['api_units']}"
         )
+        if last_run["notes"]:
+            lines.append(f"Notes: {last_run['notes']}")
     else:
         lines.append("\nLast run: none yet")
 
@@ -117,7 +127,14 @@ def format_status(conn: sqlite3.Connection) -> str:
         (VideoState.NEEDS_TRANSCRIPT.value,),
     ).fetchone()["n"]
     lines.append(f"Pending retries: {pending}")
-    return "\n".join(lines)
+    return _fit_telegram_text("\n".join(lines))
+
+
+def _fit_telegram_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    suffix = "\n… (truncated — run ytdigest status for the full list)"
+    return text[: limit - len(suffix)].rstrip() + suffix
 
 
 def format_last_delivery(conn: sqlite3.Connection, timezone_name: str) -> str:
@@ -169,11 +186,12 @@ def format_run_result(result: pipeline.RunResult) -> str:
         f"failed={result.failed} api_units={result.api_units}",
     ]
     if result.notes:
-        preview = "; ".join(result.notes[:5])
-        if len(result.notes) > 5:
-            preview += f" (+{len(result.notes) - 5} more)"
-        lines.append(preview)
-    return "\n".join(lines)
+        shown = result.notes[:8]
+        lines.extend(shown)
+        extra = len(result.notes) - len(shown)
+        if extra:
+            lines.append(f"(+{extra} more — see /status)")
+    return _fit_telegram_text("\n".join(lines))
 
 
 def start_pipeline_run(config, bot_token: str, chat_id: str, post_fn=None) -> str:

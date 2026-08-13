@@ -244,3 +244,39 @@ def test_run_refreshes_stale_live_upcoming(tmp_path, monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "Old Holiday Stream" not in captured.out
+
+
+def test_run_pipeline_partial_when_rss_channels_fail(conn, config, monkeypatch, capsys):
+    from ytdigest.discover import DiscoverResult
+    from ytdigest.pipeline import run_pipeline
+    from ytdigest.summarize import SummarizePhaseResult
+    from ytdigest.transcript import TranscriptPhaseResult
+
+    from .conftest import insert_channel
+
+    insert_channel(conn, "UC1")
+    config.secrets["GEMINI_API_KEY"] = "k"
+    monkeypatch.setattr(
+        "ytdigest.pipeline.discover.discover_all",
+        lambda *a, **k: DiscoverResult(
+            channels_polled=59,
+            channels_failed=46,
+            dead_channel_warnings=["Andrew Steele (UCxxx) poll failed (2 consecutive): timeout"],
+        ),
+    )
+    monkeypatch.setattr(
+        "ytdigest.pipeline.transcript_mod.run_transcript_phase",
+        lambda *a, **k: TranscriptPhaseResult(),
+    )
+    monkeypatch.setattr(
+        "ytdigest.pipeline.summarize_mod.run_summarize_phase",
+        lambda *a, **k: SummarizePhaseResult(),
+    )
+
+    result = run_pipeline(conn, config, use_lock=False, channel="stdout")
+    assert result.status == "partial"
+    assert result.notes[0] == "46/59 channels failed RSS poll after retry"
+    assert "Andrew Steele" in result.notes[1]
+    row = conn.execute("SELECT status, notes FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["status"] == "partial"
+    assert "46/59 channels failed" in row["notes"]

@@ -78,8 +78,12 @@ def format_header_message(digest: Digest, timezone_name: str) -> str:
     lines = [title, "", counts]
     if digest.warnings:
         lines.append("")
-        for w in digest.warnings:
+        shown = digest.warnings[:8]
+        for w in shown:
             lines.append(f"⚠️ {escape_markdown_v2(w)}")
+        extra = len(digest.warnings) - len(shown)
+        if extra:
+            lines.append(escape_markdown_v2(f"… and {extra} more (see /status)"))
     return "\n".join(lines)
 
 
