@@ -419,6 +419,7 @@ def cmd_services(args) -> None:
             result = systemd_units.install_web_service(config)
             print(result.message)
             if result.handoff:
+                print(systemd_units.HANDOFF_MARKER, file=sys.stderr)
                 systemd_units.schedule_process_exit()
                 print("Exiting manual web process for systemd handoff…", file=sys.stderr)
         elif action == "uninstall-web":

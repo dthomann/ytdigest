@@ -122,6 +122,9 @@ def _unit_path(name: str) -> Path:
     return Path("/etc/systemd/system") / name
 
 
+HANDOFF_MARKER = "ytdigest:handoff"
+
+
 def _run(cmd: list[str], *, privileged: bool = False) -> subprocess.CompletedProcess[str]:
     if privileged and os.geteuid() != 0:
         cmd = ["sudo", "-n", *cmd]
@@ -132,11 +135,66 @@ def _run(cmd: list[str], *, privileged: bool = False) -> subprocess.CompletedPro
         return result
 
 
-def sudo_available() -> bool:
+def _sudo_services_argv(
+    ctx: InstallContext, action: str, extra_args: tuple[str, ...] = ()
+) -> list[str]:
+    """Exact argv allowed by systemd/ytdigest-sudoers.example (services *)."""
+    return [
+        "sudo",
+        "-n",
+        str(ctx.ytdigest_bin),
+        "--config",
+        str(ctx.config_path),
+        "services",
+        action,
+        *extra_args,
+    ]
+
+
+def sudo_available(ctx: InstallContext) -> bool:
     if os.geteuid() == 0:
         return True
-    result = _run(["sudo", "-n", "true"])
+    result = _run(_sudo_services_argv(ctx, "status"))
     return result.returncode == 0
+
+
+def _sudo_denied(stderr: str) -> bool:
+    text = stderr.lower()
+    return (
+        "password is required" in text
+        or "a terminal is required" in text
+        or "not in the sudoers" in text
+        or "is not allowed to execute" in text
+    )
+
+
+def _maybe_sudo_cli(
+    ctx: InstallContext,
+    action: str,
+    extra_args: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str] | None:
+    """Re-exec via `sudo ytdigest services …` when not root. None means caller should proceed."""
+    if os.geteuid() == 0:
+        return None
+    cmd = _sudo_services_argv(ctx, action, extra_args)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)
+    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as exc:
+        raise SystemdError("sudo is not configured — see Settings for setup instructions") from exc
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip()
+        if not err or _sudo_denied(err):
+            raise SystemdError("sudo is not configured — see Settings for setup instructions")
+        raise SystemdError(err)
+    return result
+
+
+def _elevated_message(result: subprocess.CompletedProcess[str]) -> str:
+    return result.stdout.strip()
+
+
+def _elevated_handoff(result: subprocess.CompletedProcess[str]) -> bool:
+    return HANDOFF_MARKER in result.stderr.splitlines()
 
 
 def _sudo_hint(ctx: InstallContext) -> str:
@@ -279,7 +337,7 @@ def schedule_process_exit(*, delay_seconds: float = 1.0) -> None:
 
 def get_services_snapshot(config: Config) -> ServicesSnapshot:
     ctx = install_context_from_config(config)
-    sudo_ok = sudo_available()
+    sudo_ok = sudo_available(ctx)
     web = get_unit_status(UNIT_NAMES["web"], "Web UI")
     bot = get_unit_status(UNIT_NAMES["bot"], "Telegram Q&A bot")
     timer = get_unit_status(UNIT_NAMES["timer"], "Daily run timer")
@@ -304,11 +362,17 @@ def _daemon_reload(*, privileged: bool) -> None:
 
 def install_web_service(config: Config) -> InstallWebResult:
     ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "install-web")
+    if elevated is not None:
+        return InstallWebResult(
+            message=_elevated_message(elevated),
+            handoff=_elevated_handoff(elevated),
+        )
     content = render_unit(
         UNIT_NAMES["web"], ctx, digest_hour=config.digest_hour, timezone=config.timezone
     )
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
 
     web = get_unit_status(UNIT_NAMES["web"], "Web UI")
@@ -346,8 +410,12 @@ def install_web_service(config: Config) -> InstallWebResult:
 
 
 def uninstall_web_service(config: Config) -> str:
+    ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "uninstall-web")
+    if elevated is not None:
+        return _elevated_message(elevated)
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     _systemctl("disable", "--now", "ytdigest-web", privileged=privileged)
     _remove_unit_file(UNIT_NAMES["web"], privileged=privileged)
@@ -356,8 +424,12 @@ def uninstall_web_service(config: Config) -> str:
 
 
 def restart_web_service(config: Config) -> str:
+    ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "restart-web")
+    if elevated is not None:
+        return _elevated_message(elevated)
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     web = get_unit_status(UNIT_NAMES["web"], "Web UI")
     if not web.installed:
@@ -367,8 +439,12 @@ def restart_web_service(config: Config) -> str:
 
 
 def restart_bot_service(config: Config) -> str:
+    ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "restart-bot")
+    if elevated is not None:
+        return _elevated_message(elevated)
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     bot = get_unit_status(UNIT_NAMES["bot"], "Telegram Q&A bot")
     if not bot.installed:
@@ -381,11 +457,14 @@ def restart_bot_service(config: Config) -> str:
 
 def install_bot_service(config: Config) -> str:
     ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "install-bot")
+    if elevated is not None:
+        return _elevated_message(elevated)
     content = render_unit(
         UNIT_NAMES["bot"], ctx, digest_hour=config.digest_hour, timezone=config.timezone
     )
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     _write_unit_file(UNIT_NAMES["bot"], content, privileged=privileged)
     _daemon_reload(privileged=privileged)
@@ -394,8 +473,12 @@ def install_bot_service(config: Config) -> str:
 
 
 def uninstall_bot_service(config: Config) -> str:
+    ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "uninstall-bot")
+    if elevated is not None:
+        return _elevated_message(elevated)
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     _systemctl("disable", "--now", "ytdigest-bot", privileged=privileged)
     _remove_unit_file(UNIT_NAMES["bot"], privileged=privileged)
@@ -405,8 +488,11 @@ def uninstall_bot_service(config: Config) -> str:
 
 def install_timer_service(config: Config) -> str:
     ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "install-timer")
+    if elevated is not None:
+        return _elevated_message(elevated)
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     run_content = render_unit(
         UNIT_NAMES["run"], ctx, digest_hour=config.digest_hour, timezone=config.timezone
@@ -422,8 +508,12 @@ def install_timer_service(config: Config) -> str:
 
 
 def uninstall_timer_service(config: Config) -> str:
+    ctx = install_context_from_config(config)
+    elevated = _maybe_sudo_cli(ctx, "uninstall-timer")
+    if elevated is not None:
+        return _elevated_message(elevated)
     privileged = os.geteuid() != 0
-    if privileged and not sudo_available():
+    if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     _systemctl("disable", "--now", "ytdigest.timer", privileged=privileged)
     _remove_unit_file(UNIT_NAMES["timer"], privileged=privileged)

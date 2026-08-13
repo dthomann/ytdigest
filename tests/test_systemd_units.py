@@ -1,6 +1,7 @@
 """Tests for systemd unit rendering and service management."""
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,12 +9,22 @@ import pytest
 
 from ytdigest.config import ConfigError, load_config, update_config_file
 from ytdigest.systemd_units import (
+    HANDOFF_MARKER,
     UnitStatus,
+    _maybe_sudo_cli as _real_maybe_sudo_cli,
+    _sudo_services_argv,
     install_context_from_config,
     install_web_service,
     render_unit,
+    sudo_available,
     update_run_schedule,
 )
+
+
+@pytest.fixture(autouse=True)
+def no_cli_elevate(monkeypatch):
+    """Keep unit tests on the in-process path; elevation is covered separately."""
+    monkeypatch.setattr("ytdigest.systemd_units._maybe_sudo_cli", lambda *a, **k: None)
 
 
 @pytest.fixture
@@ -312,3 +323,98 @@ def test_install_web_service_starts_when_port_free(
     result = install_web_service(config)
     assert result.handoff is False
     mock_systemctl.assert_any_call("start", "ytdigest-web", privileged=True)
+
+
+def test_sudo_services_argv_matches_sudoers(install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    ctx = install_context_from_config(config)
+    argv = _sudo_services_argv(ctx, "install-web")
+    assert argv[:2] == ["sudo", "-n"]
+    assert argv[2] == str(ctx.ytdigest_bin)
+    assert argv[3:7] == ["--config", str(ctx.config_path), "services", "install-web"]
+    hint = f"{ctx.service_user} ALL=(root) NOPASSWD: {ctx.ytdigest_bin} --config {ctx.config_path} services *"
+    assert str(ctx.ytdigest_bin) in hint
+    assert "services *" in hint
+
+
+@patch("ytdigest.systemd_units.os.geteuid", return_value=1000)
+@patch("ytdigest.systemd_units._run")
+def test_sudo_available_probes_services_status(mock_run, _euid, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    ctx = install_context_from_config(config)
+    mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
+    assert sudo_available(ctx) is True
+    cmd = mock_run.call_args[0][0]
+    assert cmd[:2] == ["sudo", "-n"]
+    assert cmd[2] == str(ctx.ytdigest_bin)
+    assert cmd[-2:] == ["services", "status"]
+    assert "true" not in cmd
+
+
+@patch("ytdigest.systemd_units.os.geteuid", return_value=0)
+@patch("ytdigest.systemd_units._run")
+def test_sudo_available_true_when_root(mock_run, _euid, install_tree):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    ctx = install_context_from_config(config)
+    assert sudo_available(ctx) is True
+    mock_run.assert_not_called()
+
+
+def test_install_web_parses_elevated_handoff(install_tree, monkeypatch):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    proc = subprocess.CompletedProcess(
+        [],
+        0,
+        "Web service installed — handing off to systemd now.\n",
+        f"{HANDOFF_MARKER}\n",
+    )
+    monkeypatch.setattr("ytdigest.systemd_units._maybe_sudo_cli", lambda *a, **k: proc)
+    result = install_web_service(config)
+    assert result.handoff is True
+    assert "handing off" in result.message.lower()
+
+
+def test_maybe_sudo_cli_runs_allowed_command(install_tree, monkeypatch):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    ctx = install_context_from_config(config)
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, "ok\n", "")
+
+    monkeypatch.setattr("ytdigest.systemd_units.os.geteuid", lambda: 1000)
+    monkeypatch.setattr("ytdigest.systemd_units.subprocess.run", fake_run)
+    result = _real_maybe_sudo_cli(ctx, "install-bot")
+    assert result is not None
+    assert result.stdout.strip() == "ok"
+    assert captured["cmd"] == _sudo_services_argv(ctx, "install-bot")
+
+
+def test_maybe_sudo_cli_skips_when_root(install_tree, monkeypatch):
+    _, config_path = install_tree
+    config = load_config(config_path)
+    ctx = install_context_from_config(config)
+    monkeypatch.setattr("ytdigest.systemd_units.os.geteuid", lambda: 0)
+    assert _real_maybe_sudo_cli(ctx, "install-bot") is None
+
+
+def test_maybe_sudo_cli_friendly_error_when_denied(install_tree, monkeypatch):
+    from ytdigest.systemd_units import SystemdError
+
+    _, config_path = install_tree
+    config = load_config(config_path)
+    ctx = install_context_from_config(config)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, "", "sudo: a password is required\n")
+
+    monkeypatch.setattr("ytdigest.systemd_units.os.geteuid", lambda: 1000)
+    monkeypatch.setattr("ytdigest.systemd_units.subprocess.run", fake_run)
+    with pytest.raises(SystemdError, match="sudo is not configured"):
+        _real_maybe_sudo_cli(ctx, "install-bot")
