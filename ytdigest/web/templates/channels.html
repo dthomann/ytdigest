@@ -8,28 +8,22 @@
 
   {% if not oauth_configured %}
   <div class="setup-notice">
-    <p>One-time setup: configure OAuth in Google Cloud Console, add credentials to <code>.env</code>,
-    set <code>web_public_url: http://127.0.0.1:8080</code> in <code>config.yaml</code>, restart
-    the server, then use the button below. See README for full steps.</p>
+    <p>One-time setup: create a <strong>TVs and Limited Input devices</strong> OAuth client,
+    add its credentials to <code>.env</code>, restart the server, then use the button below.
+    Sign-in uses a device code — no redirect URI, works from a headless Pi. See README.</p>
     <details open>
       <summary>Google Cloud Console steps</summary>
       <ol class="setup-steps">
         <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Create a project</a> (or use your existing one)</li>
         <li><strong>APIs &amp; Services → Library</strong> → enable <strong>YouTube Data API v3</strong></li>
-        <li><strong>OAuth consent screen</strong> → External → stay in <strong>Testing</strong> (no need to publish)</li>
-        <li>Add your YouTube Google account email under <strong>Test users</strong></li>
-        <li><strong>Credentials → Create OAuth client ID → Web application</strong></li>
-        <li><strong>Authorized JavaScript origins:</strong> leave empty</li>
-        <li><strong>Authorized redirect URI:</strong> <code>http://127.0.0.1:8080/auth/youtube/callback</code>
-          (LAN IPs like <code>192.168.x.x</code> will not work)</li>
+        <li><strong>Google Auth Platform → Audience</strong> → External. Add your YouTube Google account under <strong>Test users</strong></li>
+        <li>For tokens that last beyond 7 days: <strong>Publish app</strong> (do not submit for verification). Testing refresh tokens expire weekly.</li>
+        <li><strong>Clients → Create client → TVs and Limited Input devices</strong></li>
         <li>Add to <code>.env</code> and restart <code>ytdigest web</code>:
-          <pre>YOUTUBE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+          <pre>YOUTUBE_OAUTH_CLIENT_ID=your-tv-client-id.apps.googleusercontent.com
 YOUTUBE_OAUTH_CLIENT_SECRET=your-client-secret</pre>
         </li>
       </ol>
-      <p class="meta"><strong>Pi users:</strong> connect locally on your dev machine first
-      (<code>web_public_url: http://127.0.0.1:8080</code>), authenticate once, then copy
-      <code>data/</code> to the Pi. See README.</p>
     </details>
   </div>
   {% elif oauth_error %}
@@ -46,10 +40,11 @@ YOUTUBE_OAUTH_CLIENT_SECRET=your-client-secret</pre>
     <form method="post" action="/channels/youtube-sync/run" class="inline">
       <button type="submit" class="btn btn-primary">Sync with YouTube</button>
     </form>
+    <a href="/auth/youtube/start" class="link">Reconnect</a>
     {% else %}
-    <a href="/channels/youtube-sync" class="btn btn-primary">Connect &amp; sync with YouTube</a>
+    <a href="/auth/youtube/start" class="btn btn-primary">Connect &amp; sync with YouTube</a>
     {% endif %}
-    <p class="meta">Opens Google sign-in if needed, then imports your subscriptions (sync-down only).</p>
+    <p class="meta">Shows a code to enter at google.com/device, then imports your subscriptions (sync-down only).</p>
   {% else %}
     <button class="btn btn-primary" disabled title="Add OAuth credentials to .env first">Connect &amp; sync with YouTube</button>
   {% endif %}
@@ -80,7 +75,7 @@ YOUTUBE_OAUTH_CLIENT_SECRET=your-client-secret</pre>
         {% if ch.handle %}<span class="meta">{{ ch.handle }}</span>{% endif %}
         {% if ch.consecutive_errors %}<span class="error">{{ ch.consecutive_errors }} errors</span>{% endif %}
       </td>
-      <td><span class="badge">{{ ch.source or "legacy" }}</span></td>
+      <td><span class="badge">{{ ch.display_source }}</span></td>
       <td>
         <form method="post" action="/channels/{{ ch.channel_id }}/toggle">
           <input type="hidden" name="enabled" value="{{ 'false' if ch.enabled else 'true' }}">

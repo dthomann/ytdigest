@@ -15,7 +15,10 @@ def run_youtube_sync(
     *,
     connected: bool = False,
 ) -> SyncFlash:
-    access = youtube_oauth.get_valid_access_token(conn, oauth_cfg)
+    try:
+        access = youtube_oauth.get_valid_access_token(conn, oauth_cfg)
+    except youtube_oauth.OAuthExpired as exc:
+        return SyncFlash(error=str(exc))
     if not access:
         return SyncFlash(error="Not connected to YouTube.")
 
@@ -24,6 +27,7 @@ def run_youtube_sync(
     yt_titles = {s.channel_id: s.title for s in subs}
     result = sync.compare_subscriptions(conn, yt_ids, yt_titles)
     added_count = sync.apply_sync_additions(conn, result.added)
+    sync.update_subscription_sources(conn, yt_ids)
 
     return SyncFlash(
         connected=connected,

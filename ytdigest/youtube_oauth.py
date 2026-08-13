@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import sqlite3
-import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -12,45 +11,89 @@ from scripts.resolve_channels import ResolvedChannel
 
 YOUTUBE_PROVIDER = "youtube"
 READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
-AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
+DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 SUBSCRIPTIONS_URL = "https://www.googleapis.com/youtube/v3/subscriptions"
+
+
+class OAuthExpired(Exception):
+    """Refresh token rejected (Testing expiry, revoked, or wrong client)."""
 
 
 @dataclass
 class OAuthConfig:
     client_id: str
     client_secret: str
-    redirect_uri: str
 
 
-def authorization_url(oauth: OAuthConfig, state: str) -> str:
-    params = {
-        "client_id": oauth.client_id,
-        "redirect_uri": oauth.redirect_uri,
-        "response_type": "code",
-        "scope": READONLY_SCOPE,
-        "access_type": "offline",
-        "prompt": "consent",
-        "state": state,
-    }
-    return f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
+@dataclass
+class DeviceCode:
+    device_code: str
+    user_code: str
+    verification_url: str
+    expires_in: int
+    interval: int
 
 
-def exchange_code(oauth: OAuthConfig, code: str) -> dict:
+@dataclass
+class DevicePollResult:
+    status: str  # pending | slow_down | denied | expired | authorized | error
+    token_data: dict | None = None
+    error: str | None = None
+
+
+def request_device_code(oauth: OAuthConfig) -> DeviceCode:
+    resp = requests.post(
+        DEVICE_CODE_URL,
+        data={"client_id": oauth.client_id, "scope": READONLY_SCOPE},
+        timeout=30,
+    )
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Device-code request failed ({resp.status_code})") from exc
+    if not resp.ok:
+        detail = data.get("error_description") or data.get("error") or resp.text[:200]
+        raise RuntimeError(f"Device-code request failed: {detail}")
+    url = data.get("verification_url") or data.get("verification_uri") or "https://www.google.com/device"
+    return DeviceCode(
+        device_code=data["device_code"],
+        user_code=data["user_code"],
+        verification_url=url,
+        expires_in=int(data.get("expires_in", 1800)),
+        interval=max(1, int(data.get("interval", 5))),
+    )
+
+
+def poll_device_token(oauth: OAuthConfig, device_code: str) -> DevicePollResult:
     resp = requests.post(
         TOKEN_URL,
         data={
-            "code": code,
             "client_id": oauth.client_id,
             "client_secret": oauth.client_secret,
-            "redirect_uri": oauth.redirect_uri,
-            "grant_type": "authorization_code",
+            "device_code": device_code,
+            "grant_type": DEVICE_GRANT,
         },
         timeout=30,
     )
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        return DevicePollResult(status="error", error=f"HTTP {resp.status_code}")
+    if resp.ok and data.get("access_token"):
+        return DevicePollResult(status="authorized", token_data=data)
+    err = data.get("error") or ""
+    if err == "authorization_pending":
+        return DevicePollResult(status="pending")
+    if err == "slow_down":
+        return DevicePollResult(status="slow_down")
+    if err == "access_denied":
+        return DevicePollResult(status="denied")
+    if err == "expired_token":
+        return DevicePollResult(status="expired")
+    detail = data.get("error_description") or err or f"HTTP {resp.status_code}"
+    return DevicePollResult(status="error", error=detail)
 
 
 def refresh_access_token(oauth: OAuthConfig, refresh_token: str) -> dict:
@@ -64,6 +107,8 @@ def refresh_access_token(oauth: OAuthConfig, refresh_token: str) -> dict:
         },
         timeout=30,
     )
+    if resp.status_code == 400:
+        raise OAuthExpired("YouTube sign-in expired. Reconnect from Channels.")
     resp.raise_for_status()
     return resp.json()
 
@@ -87,6 +132,11 @@ def save_tokens(conn: sqlite3.Connection, token_data: dict, *, existing_refresh:
         """,
         (YOUTUBE_PROVIDER, refresh, token_data.get("access_token"), expires_at, now),
     )
+    conn.commit()
+
+
+def clear_tokens(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM oauth_tokens WHERE provider = ?", (YOUTUBE_PROVIDER,))
     conn.commit()
 
 
@@ -120,7 +170,11 @@ def get_valid_access_token(conn: sqlite3.Connection, oauth: OAuthConfig) -> str 
     if not refresh:
         return access
 
-    token_data = refresh_access_token(oauth, refresh)
+    try:
+        token_data = refresh_access_token(oauth, refresh)
+    except OAuthExpired:
+        clear_tokens(conn)
+        raise
     save_tokens(conn, token_data, existing_refresh=refresh)
     return token_data.get("access_token")
 

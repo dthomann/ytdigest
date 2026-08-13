@@ -211,6 +211,18 @@ h2.section-title { font-size: 1.1rem; color: var(--muted); margin: 2rem 0 1rem; 
   margin: 0 0 0.75rem;
 }
 
+.device-code {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  margin: 0.75rem 0;
+}
+
+.device-section .setup-steps {
+  margin-bottom: 0.5rem;
+}
+
 .schedule-form {
   display: flex;
   flex-wrap: wrap;

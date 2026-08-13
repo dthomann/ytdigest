@@ -40,7 +40,7 @@ def compare_subscriptions(
                 title=youtube_titles.get(cid),
                 handle=None,
                 enabled=True,
-                source="sync",
+                source="subscribed",
                 added_at=utcnow_iso(),
                 consecutive_errors=0,
                 last_error=None,
@@ -64,11 +64,23 @@ def apply_sync_additions(conn: sqlite3.Connection, to_add: list[channels_mod.Cha
             ch.channel_id,
             title=ch.title,
             handle=ch.handle,
-            source="sync",
+            source="subscribed",
             enable=True,
         )
         count += 1
     return count
+
+
+def update_subscription_sources(conn: sqlite3.Connection, youtube_channel_ids: set[str]) -> None:
+    """Mark local channels as subscribed or manual based on current YouTube subs."""
+    for ch in channels_mod.list_channels(conn):
+        new_source = "subscribed" if ch.channel_id in youtube_channel_ids else "manual"
+        if ch.source != new_source:
+            conn.execute(
+                "UPDATE channels SET source = ? WHERE channel_id = ?",
+                (new_source, ch.channel_id),
+            )
+    conn.commit()
 
 
 def apply_sync_removals(conn: sqlite3.Connection, channel_ids: list[str]) -> int:

@@ -59,19 +59,19 @@ def test_web_auth_accepts_bearer_header(config):
     assert resp.status_code == 200
 
 
-def test_oauth_redirect_uri_ignores_host_header(config):
+def test_oauth_config_ignores_host_header(config):
     from ytdigest.web.oauth_helpers import oauth_config_from_request
 
     config.secrets["YOUTUBE_OAUTH_CLIENT_ID"] = "client-id"
     config.secrets["YOUTUBE_OAUTH_CLIENT_SECRET"] = "client-secret"
-    config.values["web_public_url"] = None
-    config.values["web_port"] = 9090
 
     class FakeRequest:
         headers = {"host": "evil.example.com:9090"}
 
     oauth_cfg = oauth_config_from_request(config, FakeRequest())
-    assert oauth_cfg.redirect_uri == "http://127.0.0.1:9090/auth/youtube/callback"
+    assert oauth_cfg is not None
+    assert oauth_cfg.client_id == "client-id"
+    assert oauth_cfg.client_secret == "client-secret"
 
 
 def test_run_manager_rejects_concurrent_start(config, monkeypatch):

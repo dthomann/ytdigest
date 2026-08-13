@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ... import channels as channels_mod, db, sync, youtube_oauth
 from ..oauth_helpers import oauth_config_from_request, oauth_configured
-from ..services.sync_flash import load_and_clear_sync_flash, save_sync_flash
+from ..services.sync_flash import SyncFlash, load_and_clear_sync_flash, save_sync_flash
 from ..services.youtube_sync import run_youtube_sync
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
@@ -59,7 +59,7 @@ def youtube_sync_start(request: Request):
         conn.close()
 
     if not connected:
-        return RedirectResponse("/auth/youtube/start", status_code=303)
+        return RedirectResponse("/auth/youtube/start", status_code=303)  # device-code connect
 
     templates = request.app.state.templates
     return templates.TemplateResponse(request, "youtube_sync_submit.html", {})
@@ -77,6 +77,9 @@ def youtube_sync_run(request: Request):
     try:
         flash = run_youtube_sync(conn, config, oauth_cfg)
         save_sync_flash(config, flash)
+    except Exception as exc:
+        save_sync_flash(config, SyncFlash(error=str(exc)))
+        return RedirectResponse("/channels?oauth_error=sync_failed", status_code=303)
     finally:
         conn.close()
 

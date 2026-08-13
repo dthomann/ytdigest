@@ -26,6 +26,28 @@ def test_channels_page_loads(config):
     assert "Connect &amp; sync with YouTube" in resp.text or "Connect & sync with YouTube" in resp.text
 
 
+def test_channels_page_renders_source_badges(config):
+    from ytdigest import channels as channels_mod
+
+    db.init_db(config.db_path)
+    conn = db.connect(config.db_path)
+    try:
+        channels_mod.add_channel(conn, "UCman", title="Manual Chan", source="manual")
+        channels_mod.add_channel(conn, "UCsub", title="Sub Chan", source="sync")
+        channels_mod.add_channel(conn, "UCimp", title="Import Chan", source="import")
+    finally:
+        conn.close()
+
+    app = create_app(config)
+    client = TestClient(app)
+    resp = client.get("/channels")
+    assert resp.status_code == 200
+    assert "manual" in resp.text
+    assert "subscribed" in resp.text
+    assert "legacy" not in resp.text
+    assert "import" not in resp.text
+
+
 def test_runs_page_loads(config):
     db.init_db(config.db_path)
     app = create_app(config)

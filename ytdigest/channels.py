@@ -6,6 +6,13 @@ from dataclasses import dataclass
 
 from .util import utcnow_iso
 
+# Older DBs used "sync" for YouTube subs and "import"/NULL for everything else.
+_SUBSCRIBED_SOURCES = frozenset({"subscribed", "sync"})
+
+
+def display_source(source: str | None) -> str:
+    return "subscribed" if source in _SUBSCRIBED_SOURCES else "manual"
+
 
 @dataclass
 class ChannelRow:
@@ -18,6 +25,10 @@ class ChannelRow:
     consecutive_errors: int
     last_error: str | None
 
+    @property
+    def display_source(self) -> str:
+        return display_source(self.source)
+
 
 def list_channels(conn: sqlite3.Connection) -> list[ChannelRow]:
     rows = conn.execute(
@@ -25,7 +36,8 @@ def list_channels(conn: sqlite3.Connection) -> list[ChannelRow]:
         SELECT channel_id, title, handle, enabled, source, added_at,
                consecutive_errors, last_error
         FROM channels
-        ORDER BY COALESCE(title, channel_id) COLLATE NOCASE
+        ORDER BY CASE WHEN source IN ('subscribed', 'sync') THEN 1 ELSE 0 END,
+                 COALESCE(title, channel_id) COLLATE NOCASE
         """
     ).fetchall()
     return [
@@ -94,7 +106,7 @@ def import_channels(
     conn: sqlite3.Connection,
     resolved: list,
     *,
-    source: str = "import",
+    source: str = "manual",
 ) -> int:
     now = utcnow_iso()
     added = 0

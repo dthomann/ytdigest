@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Connect YouTube — ytdigest{% endblock %}
+{% block content %}
+<h1>Connect YouTube</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+<p><a href="/auth/youtube/start" class="btn">Try again</a>
+   <a href="/channels" class="link">Back to channels</a></p>
+{% else %}
+<section class="sync-section device-section">
+  <p>On any phone or computer:</p>
+  <ol class="setup-steps">
+    <li>Open <a href="{{ device.verification_url }}" target="_blank" rel="noopener">{{ device.verification_url }}</a></li>
+    <li>Sign in with the Google account that owns your YouTube subscriptions</li>
+    <li>Enter this code:</li>
+  </ol>
+  <p class="device-code" id="user-code">{{ device.user_code }}</p>
+  <p class="meta" id="device-status">Waiting for Google…</p>
+  <p class="meta">Code expires in {{ (device.expires_in / 60)|int }} minutes.
+     <a href="/auth/youtube/start">Get a new code</a> ·
+     <a href="/channels">Cancel</a></p>
+</section>
+<script>
+(function () {
+  const sid = {{ sid|tojson }};
+  let intervalMs = {{ interval_ms }};
+  const statusEl = document.getElementById("device-status");
+  let timer = null;
+
+  function poll() {
+    const body = new FormData();
+    body.set("sid", sid);
+    fetch("/auth/youtube/device/poll", { method: "POST", body, credentials: "same-origin" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.status === "authorized" && data.redirect) {
+          statusEl.textContent = "Connected. Syncing…";
+          window.location = data.redirect;
+          return;
+        }
+        if (data.status === "slow_down") {
+          intervalMs += 5000;
+          statusEl.textContent = "Waiting for Google…";
+        } else if (data.status === "pending") {
+          statusEl.textContent = "Waiting for Google…";
+        } else if (data.status === "denied") {
+          statusEl.textContent = "Sign-in was denied.";
+          statusEl.className = "error";
+          return;
+        } else if (data.status === "expired") {
+          statusEl.innerHTML = 'Code expired. <a href="/auth/youtube/start">Get a new code</a>';
+          statusEl.className = "error";
+          return;
+        } else if (data.status === "error") {
+          statusEl.textContent = data.error || "Something went wrong.";
+          statusEl.className = "error";
+          return;
+        }
+        timer = setTimeout(poll, intervalMs);
+      })
+      .catch(() => {
+        statusEl.textContent = "Lost connection to ytdigest. Retrying…";
+        timer = setTimeout(poll, intervalMs);
+      });
+  }
+  timer = setTimeout(poll, intervalMs);
+})();
+</script>
+{% endif %}
+{% endblock %}

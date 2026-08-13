@@ -20,8 +20,8 @@ def test_compare_adds_new_youtube_subs(conn):
 
 
 def test_compare_suggests_removal_for_enabled_not_on_youtube(conn):
-    channels_mod.add_channel(conn, "UCgone", title="Gone", source="sync", enable=True)
-    channels_mod.add_channel(conn, "UCdisabled", title="Disabled", source="sync", enable=False)
+    channels_mod.add_channel(conn, "UCgone", title="Gone", source="subscribed", enable=True)
+    channels_mod.add_channel(conn, "UCdisabled", title="Disabled", source="subscribed", enable=False)
 
     result = sync.compare_subscriptions(conn, set())
 
@@ -40,7 +40,7 @@ def test_apply_sync_additions(conn):
             title="New",
             handle=None,
             enabled=True,
-            source="sync",
+            source="subscribed",
             added_at=utcnow_iso(),
             consecutive_errors=0,
             last_error=None,
@@ -51,4 +51,35 @@ def test_apply_sync_additions(conn):
     ch = channels_mod.get_channel(conn, "UCnew")
     assert ch is not None
     assert ch.enabled is True
-    assert ch.source == "sync"
+    assert ch.source == "subscribed"
+
+
+def test_update_subscription_sources(conn):
+    channels_mod.add_channel(conn, "UCkeep", title="Keep", source="manual", enable=True)
+    channels_mod.add_channel(conn, "UCdrop", title="Drop", source="subscribed", enable=True)
+    channels_mod.add_channel(conn, "UCoff", title="Off", source="import", enable=False)
+
+    sync.update_subscription_sources(conn, {"UCkeep", "UCoff"})
+
+    assert channels_mod.get_channel(conn, "UCkeep").source == "subscribed"
+    assert channels_mod.get_channel(conn, "UCdrop").source == "manual"
+    assert channels_mod.get_channel(conn, "UCoff").source == "subscribed"
+
+
+def test_update_subscription_sources_empty_marks_all_manual(conn):
+    channels_mod.add_channel(conn, "UCold", title="Old", source="sync", enable=True)
+
+    sync.update_subscription_sources(conn, set())
+
+    assert channels_mod.get_channel(conn, "UCold").source == "manual"
+
+
+def test_update_subscription_sources_handles_many_youtube_ids(conn):
+    channels_mod.add_channel(conn, "UC0001", title="Keep", source="manual")
+    channels_mod.add_channel(conn, "UClocal", title="Local only", source="subscribed")
+    yt_ids = {f"UC{i:04d}" for i in range(1200)}
+
+    sync.update_subscription_sources(conn, yt_ids)
+
+    assert channels_mod.get_channel(conn, "UC0001").source == "subscribed"
+    assert channels_mod.get_channel(conn, "UClocal").source == "manual"

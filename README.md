@@ -198,7 +198,7 @@ Secrets never go here — see `.env.example`. Unknown keys and any key that look
 | `telegram_message_delay_seconds`  | `1`                     | Per-chat rate limit between digest messages.                                                                                                              |
 | `web_host`                        | `0.0.0.0`               | Web UI bind address. Use `0.0.0.0` for LAN access; browse via `http://<host-lan-ip>:8080`.                                                                |
 | `web_port`                        | `8080`                  | Web UI port.                                                                                                                                              |
-| `web_public_url`                  | `null`                  | OAuth redirect base URL. Required for YouTube connect — use `http://127.0.0.1:8080` for local-first setup (see below).                                    |
+| `web_public_url`                  | `null`                  | Optional public base URL. Not used for YouTube connect (device-code flow).                                                                                |
 
 ## Web UI security (optional)
 
@@ -236,8 +236,8 @@ prompt). When the UI is exposed on the network without a token, a warning is log
 | Pi on LAN, `web_host: 0.0.0.0` | Set `WEB_AUTH_TOKEN` |
 | Public domain | Set `WEB_AUTH_TOKEN` and use HTTPS in front (reverse proxy) |
 
-OAuth redirect URIs are never derived from the `Host` header — they use `web_public_url` when set,
-otherwise `http://127.0.0.1:<web_port>` (see [Connect YouTube account](#connect-youtube-account-advanced)).
+YouTube connect uses Google's device-code flow (no redirect URI). See
+[Connect YouTube account](#connect-youtube-account-advanced).
 
 ## Secrets (`.env`, chmod 600)
 
@@ -372,11 +372,10 @@ https://takeout.google.com → **Deselect all** → select **YouTube and YouTube
 *All YouTube data included* → keep only **subscriptions** → export. You get a CSV with a
 `Channel Id` column. Feed it straight to `ytdigest import-channels`.
 
-**Web UI — Connect YouTube account (advanced):** imports subscriptions live and keeps them in
-sync. Google OAuth **does not accept a private LAN IP** (e.g. `http://192.168.1.100:8080`) as a
-redirect URI, so you cannot complete sign-in on the Pi directly unless the web UI is reachable on
-a public domain. For a home Pi, use the [local-first workflow](#connect-youtube-account-advanced)
-below: authenticate once on your dev machine, then copy `data/` to the Pi.
+**Web UI — Connect YouTube account:** imports subscriptions live and keeps them in sync.
+Uses Google's device-code flow, so it works from a headless Pi on your LAN (open the UI, enter
+the code at google.com/device on any phone). See
+[Connect YouTube account](#connect-youtube-account-advanced).
 
 **Per-channel fallback:** `ytdigest add-channel @handle` or add via the web UI Channels page.
 
@@ -499,10 +498,13 @@ Start the bot service when ready for Q&A:
 
 ### Connect YouTube account (advanced)
 
-> **Warning:** This is somewhat advanced. Google OAuth redirect URIs must be exact and cannot use a private LAN IP. 
-> Either expose the web UI on a public domain, or use the local-first workflow below.
+The web UI imports and syncs YouTube subscriptions with Google's **device-code** flow. That works
+from a headless Pi: the UI shows a code, you enter it at https://www.google.com/device on any
+phone or laptop. Tokens are stored in `data/ytdigest.db`; after connect, **Sync with YouTube**
+refreshes without another sign-in.
 
-The web UI can import and sync your YouTube subscriptions via OAuth. Tokens are stored in `data/ytdigest.db`; after a one-time connect, the Pi can refresh tokens and re-sync without opening a browser again.
+Create **your own** OAuth client in **your** Google Cloud project. Do not share client secrets
+(this is a self-hosted tool; each operator has their own client).
 
 #### Google Cloud Console (one-time)
 
@@ -510,16 +512,14 @@ Use the same project as your YouTube Data API key, or create a new one:
 
 1. https://console.cloud.google.com → **Create project** (e.g. `ytdigest`)
 2. **APIs & Services → Library** → search **YouTube Data API v3** → **Enable**
-3. **APIs & Services → OAuth consent screen**
+3. **Google Auth Platform → Audience**
    - User type: **External**
    - Fill in the required app name / contact email
-   - **Publishing status can stay Testing** — you do not need to submit for verification
    - Under **Test users**, add the Google account email you use for YouTube
-4. **APIs & Services → Credentials → Create credentials → OAuth client ID**
-   - Application type: **Web application**
-   - **Authorized JavaScript origins:** leave empty
-   - **Authorized redirect URIs:** `http://127.0.0.1:8080/auth/youtube/callback`
-     (or your public URL + `/auth/youtube/callback` if using a domain)
+   - **Testing** refresh tokens expire after **7 days**. For a personal Pi, click **Publish app**
+     and do **not** submit for verification (Google's personal-use path; you will see an
+     "unverified app" warning once when connecting).
+4. **Clients → Create client** → application type **TVs and Limited Input devices**
 5. Copy the client ID and secret to `.env`:
    
    ```
@@ -527,53 +527,19 @@ Use the same project as your YouTube Data API key, or create a new one:
    YOUTUBE_OAUTH_CLIENT_SECRET=...
    ```
 
-Also create a **YouTube Data API key** in the same project if you have not already (see
+   Also create a **YouTube Data API key** in the same project if you have not already (see
 [API keys](#api-keys-and-accounts) above).
 
-#### Option A — Public domain
+#### Connect from the Pi (or any machine)
 
-If the web UI is reachable at a stable public URL (e.g. `https://ytdigest.example.com`):
+1. Restart `ytdigest web` after changing `.env`.
+2. Open **Channels** → **Connect & sync with YouTube**.
+3. On a phone or laptop, open the shown URL (usually https://www.google.com/device), sign in
+   with the test-user / YouTube account, and enter the code.
+4. The Pi stores tokens and imports subscriptions. Later syncs use the refresh token.
 
-```yaml
-web_host: 0.0.0.0
-web_port: 8080
-web_public_url: https://ytdigest.example.com
-```
-
-Register `https://ytdigest.example.com/auth/youtube/callback` as the redirect URI in Google Console. Start the web UI, open **Channels**, click **Connect & sync with YouTube**, and sign in with the test-user account.
-
-#### Option B — Local-first, then copy to Pi (recommended for home Pi)
-
-Do the OAuth dance on your dev machine, then deploy the resulting database to the Pi.
-
-1. On your dev machine, in `config.yaml`:
-   
-   ```yaml
-   web_host: 127.0.0.1
-   web_port: 8080
-   web_public_url: http://127.0.0.1:8080
-   ```
-2. Ensure `.env` has `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET`, and
-   `YOUTUBE_API_KEY`.
-3. Run locally:
-   
-   ```bash
-   ytdigest init-db
-   ytdigest web
-   ```
-4. Open http://127.0.0.1:8080/channels → **Connect & sync with YouTube** → sign in with the
-   Google account you added as a test user. Your subscriptions are imported into `data/ytdigest.db`.
-5. Copy to the Pi (first deployment — `scripts/deploy.sh` skips `data/`):
-   
-   ```bash
-   rsync -avz data/ "$PI:~/ytdigest/data/"
-   ```
-   
-   Copy `.env` to the Pi as well (same OAuth credentials are needed for token refresh and
-   re-sync). Run `seed` on the Pi if you have not already.
-
-After this, the Pi web UI can **Sync with YouTube** using the stored refresh token — no browser
-sign-in required on the Pi.
+**Reconnect** on the Channels page if Google rejects the refresh token (Testing expiry, revoked
+access, or after switching to a new OAuth client).
 
 ### Web UI (optional)
 
@@ -587,8 +553,6 @@ subscription sync, and a "Run now" button.
    web_port: 8080
    ```
    
-   Do **not** set `web_public_url` to a LAN IP — it will not work for OAuth (see
-   [Connect YouTube account](#connect-youtube-account-advanced) above).
 2. Set `WEB_AUTH_TOKEN` in `.env` on the Pi (recommended whenever `web_host` is `0.0.0.0`). See
    [Web UI security](#web-ui-security-optional).
 3. Install and start:

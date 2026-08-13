@@ -69,7 +69,7 @@ def cmd_import_channels(args) -> None:
     except (ValueError, FileNotFoundError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-    added = channels_mod.import_channels(conn, resolved, source="import")
+    added = channels_mod.import_channels(conn, resolved, source="manual")
     print(f"Imported {added} new channel(s) ({len(resolved)} total in file)")
 
 
