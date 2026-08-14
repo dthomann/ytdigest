@@ -98,27 +98,7 @@ def test_dead_channel_warning_after_max_consecutive_errors(conn, config):
     assert "has failed 10 consecutive polls" in result.dead_channel_warnings[0]
 
 
-def test_discover_retries_once_then_succeeds(conn, config):
-    insert_channel(conn, "UCnormal0000000000000000", title="Normal")
-    calls = {"n": 0}
-
-    def fetch(url):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise ConnectionError("transient blip")
-        return load_fixture_text("rss_normal_channel.xml")
-
-    result = discover_all(conn, config, fetch_fn=fetch)
-    assert calls["n"] == 2
-    assert result.channels_failed == 0
-    assert result.new_videos == 2
-    assert result.dead_channel_warnings == []
-    row = conn.execute("SELECT consecutive_errors, last_error FROM channels").fetchone()
-    assert row["consecutive_errors"] == 0
-    assert row["last_error"] is None
-
-
-def test_discover_retries_once_then_reports_failure(conn, config):
+def test_discover_does_not_retry_immediately(conn, config):
     insert_channel(conn, "UCbroken00000000000000000", title="Broken")
     calls = {"n": 0}
 
@@ -127,7 +107,7 @@ def test_discover_retries_once_then_reports_failure(conn, config):
         raise ConnectionError("still down")
 
     result = discover_all(conn, config, fetch_fn=fetch)
-    assert calls["n"] == 2
+    assert calls["n"] == 1
     assert result.channels_failed == 1
     assert len(result.dead_channel_warnings) == 1
     assert "Broken" in result.dead_channel_warnings[0]

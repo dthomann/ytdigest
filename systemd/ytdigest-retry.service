@@ -1,5 +1,5 @@
 [Unit]
-Description=ytdigest daily run
+Description=ytdigest scheduled retry (no-op unless a retry is due)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,10 +8,7 @@ Type=oneshot
 User=ytdigest
 WorkingDirectory=/opt/ytdigest
 EnvironmentFile=/opt/ytdigest/.env
-ExecStart=/opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml run --scheduled
+ExecStart=/opt/ytdigest/venv/bin/ytdigest --config /opt/ytdigest/config.yaml run --scheduled --retry-only
 MemoryMax=300M
 Nice=10
 IOSchedulingClass=idle
-
-[Install]
-WantedBy=multi-user.target

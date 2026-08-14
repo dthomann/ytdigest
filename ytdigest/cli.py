@@ -188,12 +188,24 @@ def cmd_run(args) -> None:
 
     conn = _connect(config)
     try:
-        result = pipeline.run_pipeline(conn, config, limit=args.limit, channel=args.channel)
+        retry_only = getattr(args, "retry_only", False)
+        result = pipeline.run_pipeline(
+            conn,
+            config,
+            limit=args.limit,
+            channel=args.channel,
+            scheduled=getattr(args, "scheduled", False) or retry_only,
+            retry_only=retry_only,
+        )
+        if result.skipped:
+            return
         print(
             f"Run #{result.run_id} finished status={result.status} "
             f"discovered={result.discovered} summarized={result.summarized} failed={result.failed}"
         )
     except RunInProgressError as exc:
+        if getattr(args, "retry_only", False):
+            return
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception as exc:
@@ -519,6 +531,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--limit", type=int, default=None, help="cap on transcript fetches this run")
     p.add_argument("--channel", choices=["telegram", "stdout", "file"], default=None)
+    p.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="systemd daily run: on RSS or yt-dlp failure, queue a full retry in 1h",
+    )
+    p.add_argument(
+        "--retry-only",
+        action="store_true",
+        help="no-op unless a scheduled retry is due (used by ytdigest-retry.timer)",
+    )
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("discover", help="run only the discovery phase")

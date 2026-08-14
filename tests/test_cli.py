@@ -275,7 +275,7 @@ def test_run_pipeline_partial_when_rss_channels_fail(conn, config, monkeypatch, 
 
     result = run_pipeline(conn, config, use_lock=False, channel="stdout")
     assert result.status == "partial"
-    assert result.notes[0] == "46/59 channels failed RSS poll after retry"
+    assert result.notes[0] == "46/59 channels failed RSS poll"
     assert "Andrew Steele" in result.notes[1]
     row = conn.execute("SELECT status, notes FROM runs ORDER BY id DESC LIMIT 1").fetchone()
     assert row["status"] == "partial"

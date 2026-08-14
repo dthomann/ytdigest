@@ -18,6 +18,8 @@ UNIT_NAMES = {
     "bot": "ytdigest-bot.service",
     "run": "ytdigest.service",
     "timer": "ytdigest.timer",
+    "retry_run": "ytdigest-retry.service",
+    "retry_timer": "ytdigest-retry.timer",
 }
 
 
@@ -500,10 +502,19 @@ def install_timer_service(config: Config) -> str:
     timer_content = render_unit(
         UNIT_NAMES["timer"], ctx, digest_hour=config.digest_hour, timezone=config.timezone
     )
+    retry_run_content = render_unit(
+        UNIT_NAMES["retry_run"], ctx, digest_hour=config.digest_hour, timezone=config.timezone
+    )
+    retry_timer_content = render_unit(
+        UNIT_NAMES["retry_timer"], ctx, digest_hour=config.digest_hour, timezone=config.timezone
+    )
     _write_unit_file(UNIT_NAMES["run"], run_content, privileged=privileged)
     _write_unit_file(UNIT_NAMES["timer"], timer_content, privileged=privileged)
+    _write_unit_file(UNIT_NAMES["retry_run"], retry_run_content, privileged=privileged)
+    _write_unit_file(UNIT_NAMES["retry_timer"], retry_timer_content, privileged=privileged)
     _daemon_reload(privileged=privileged)
     _systemctl("enable", "--now", "ytdigest.timer", privileged=privileged)
+    _systemctl("enable", "--now", "ytdigest-retry.timer", privileged=privileged)
     return f"Daily run timer installed ({config.digest_hour:02d}:00 {config.timezone})"
 
 
@@ -516,8 +527,12 @@ def uninstall_timer_service(config: Config) -> str:
     if privileged and not sudo_available(ctx):
         raise SystemdError("sudo is not configured — see Settings for setup instructions")
     _systemctl("disable", "--now", "ytdigest.timer", privileged=privileged)
+    if _unit_path(UNIT_NAMES["retry_timer"]).exists():
+        _systemctl("disable", "--now", "ytdigest-retry.timer", privileged=privileged)
     _remove_unit_file(UNIT_NAMES["timer"], privileged=privileged)
     _remove_unit_file(UNIT_NAMES["run"], privileged=privileged)
+    _remove_unit_file(UNIT_NAMES["retry_timer"], privileged=privileged)
+    _remove_unit_file(UNIT_NAMES["retry_run"], privileged=privileged)
     _daemon_reload(privileged=privileged)
     return "Daily run timer removed"
 

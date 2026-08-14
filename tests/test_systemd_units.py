@@ -35,7 +35,13 @@ def install_tree(tmp_path):
     (install_dir / "venv" / "bin" / "ytdigest").write_text("#!/bin/sh\n")
     (install_dir / "systemd").mkdir()
     repo_systemd = Path(__file__).resolve().parent.parent / "systemd"
-    for name in ("ytdigest-web.service", "ytdigest.service", "ytdigest.timer"):
+    for name in (
+        "ytdigest-web.service",
+        "ytdigest.service",
+        "ytdigest.timer",
+        "ytdigest-retry.service",
+        "ytdigest-retry.timer",
+    ):
         (install_dir / "systemd" / name).write_text(
             (repo_systemd / name).read_text(encoding="utf-8"),
             encoding="utf-8",
@@ -60,6 +66,12 @@ def test_render_units_home_setup(install_tree):
     assert "/opt/ytdigest" not in web
     timer = render_unit("ytdigest.timer", ctx, digest_hour=8, timezone="Europe/Zurich")
     assert "OnCalendar=*-*-* 08:00:00 Europe/Zurich" in timer
+    run = render_unit("ytdigest.service", ctx, digest_hour=8, timezone="Europe/Zurich")
+    assert "run --scheduled" in run
+    retry = render_unit("ytdigest-retry.service", ctx, digest_hour=8, timezone="Europe/Zurich")
+    assert "run --scheduled --retry-only" in retry
+    retry_timer = render_unit("ytdigest-retry.timer", ctx, digest_hour=8, timezone="Europe/Zurich")
+    assert "OnCalendar=*:0/15" in retry_timer
 
 
 def test_render_units_dedicated_paths(tmp_path):

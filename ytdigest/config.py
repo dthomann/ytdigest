@@ -26,6 +26,8 @@ DEFAULTS = {
     "whisper_max_duration_minutes": 120,
     "retry_backoff_hours": [6, 12, 24, 48, 96],
     "max_transcript_attempts": 5,
+    "scheduled_retry_delay_hours": 1,
+    "max_scheduled_retries": 3,
     "summary_model": "gemini-2.5-flash-lite",
     "summary_mode": "sync",
     "summary_words": [60, 100],
@@ -215,6 +217,13 @@ def _validate(values: dict, config_path: Path) -> None:
         and transcript_delay[0] <= transcript_delay[1]
     ):
         raise ConfigError(f"{config_path}: transcript_delay_seconds must be [min, max] with min <= max")
+
+    require_type("scheduled_retry_delay_hours", (int, float))
+    if values["scheduled_retry_delay_hours"] <= 0:
+        raise ConfigError(f"{config_path}: scheduled_retry_delay_hours must be > 0")
+    require_type("max_scheduled_retries", int)
+    if values["max_scheduled_retries"] < 1:
+        raise ConfigError(f"{config_path}: max_scheduled_retries must be >= 1")
 
     require_type("web_port", int)
     if not (1 <= values["web_port"] <= 65535):

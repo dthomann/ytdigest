@@ -4,13 +4,14 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import classify, deliver as deliver_mod, digest as digest_mod, discover, metadata
-from . import summarize as summarize_mod, transcript as transcript_mod
+from . import scheduled_retry, summarize as summarize_mod, transcript as transcript_mod
 from .config import Config
 from .models import VideoState
-from .run_lock import RunInProgressError, run_lock
+from .run_lock import run_lock
 from .run_report import report_run_issues
 from .util import utcnow_iso
 
@@ -32,6 +33,7 @@ class RunResult:
     failed: int = 0
     api_units: int = 0
     notes: list[str] = field(default_factory=list)
+    skipped: bool = False
 
 
 def lock_path(config: Config) -> Path:
@@ -80,7 +82,7 @@ def discover_metadata_classify(conn, config):
     return discover_result, upcoming_ids, quota_error, api_units
 
 
-def _run_transcript_phase(conn, config, limit=None) -> tuple[list[str], list[str]]:
+def _run_transcript_phase(conn, config, limit=None) -> tuple[list[str], transcript_mod.TranscriptPhaseResult]:
     notes = []
     result = transcript_mod.run_transcript_phase(conn, config, limit=limit)
     if result.aborted:
@@ -95,7 +97,7 @@ def _run_transcript_phase(conn, config, limit=None) -> tuple[list[str], list[str
         result.retrying,
         result.aborted,
     )
-    return notes, result.failed_permanent_ids
+    return notes, result
 
 
 def _run_summarize_phase(conn, config) -> tuple[list[str], list[str]]:
@@ -193,6 +195,36 @@ def build_and_deliver_digest(conn, config, channel, upcoming_ids, failed_transcr
     return d, delivery_error
 
 
+def _apply_scheduled_retry(
+    conn,
+    config,
+    *,
+    scheduled: bool,
+    retry_only: bool,
+    should_retry: bool,
+    retryable_ids: list[str],
+    now: datetime,
+    notes: list[str],
+) -> None:
+    if not scheduled:
+        return
+    if not should_retry:
+        scheduled_retry.clear(conn)
+        return
+    note = scheduled_retry.schedule_next(
+        conn, config, is_retry_run=retry_only, now=now
+    )
+    if note:
+        notes.append(note)
+        due = scheduled_retry.retry_at(conn)
+        if due:
+            scheduled_retry.align_transcript_retries(conn, retryable_ids, due)
+        logger.info("%s", note)
+    else:
+        max_n = config.values["max_scheduled_retries"]
+        notes.append(f"scheduled retries exhausted ({max_n}/{max_n})")
+
+
 def run_pipeline(
     conn: sqlite3.Connection,
     config: Config,
@@ -200,11 +232,22 @@ def run_pipeline(
     limit: int | None = None,
     channel: str | None = None,
     use_lock: bool = True,
+    scheduled: bool = False,
+    retry_only: bool = False,
+    now: datetime | None = None,
 ) -> RunResult:
     channel = channel or config.values["delivery_channel"]
     lock = run_lock(lock_path(config)) if use_lock else _null_context()
+    now = now or datetime.now(timezone.utc)
 
     with lock:
+        if retry_only:
+            if scheduled_retry.in_digest_hour(config, now) or not scheduled_retry.is_retry_due(
+                conn, now
+            ):
+                logger.info("scheduled retry not due; skipping")
+                return RunResult(run_id=0, status="skipped", skipped=True)
+
         run_started = utcnow_iso()
         cur = conn.execute("INSERT INTO runs (started_at, status) VALUES (?, 'ok')", (run_started,))
         run_id = cur.lastrowid
@@ -224,7 +267,7 @@ def run_pipeline(
                 status = "partial"
                 notes.append(
                     f"{discover_result.channels_failed}/{discover_result.channels_polled} "
-                    "channels failed RSS poll after retry"
+                    "channels failed RSS poll"
                 )
             if discover_result.dead_channel_warnings:
                 notes.extend(discover_result.dead_channel_warnings)
@@ -232,7 +275,8 @@ def run_pipeline(
                 notes.append(quota_error)
                 status = "partial"
 
-            transcript_notes, failed_transcript_ids = _run_transcript_phase(conn, config, limit=limit)
+            transcript_notes, transcript_result = _run_transcript_phase(conn, config, limit=limit)
+            failed_transcript_ids = transcript_result.failed_permanent_ids
             if transcript_notes:
                 notes.extend(transcript_notes)
                 status = "partial"
@@ -248,6 +292,18 @@ def run_pipeline(
             if delivery_error:
                 notes.append(f"delivery failed: {delivery_error}")
                 status = "error"
+
+            should_retry = discover_result.channels_failed > 0 or transcript_result.had_tier2_error
+            _apply_scheduled_retry(
+                conn,
+                config,
+                scheduled=scheduled,
+                retry_only=retry_only,
+                should_retry=should_retry,
+                retryable_ids=transcript_result.retryable_ids,
+                now=now,
+                notes=notes,
+            )
 
             conn.execute(
                 """

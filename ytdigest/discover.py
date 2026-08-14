@@ -141,13 +141,8 @@ def discover_all(
         result.channels_polled += 1
         now = utcnow_iso()
         try:
-            channel_counts = _discover_channel_with_retry(
-                conn,
-                ch["channel_id"],
-                fetch_fn=fetch_fn,
-                dry_run=dry_run,
-                delay_low=delay_low,
-                delay_high=delay_high,
+            channel_counts = discover_channel(
+                conn, ch["channel_id"], fetch_fn=fetch_fn, dry_run=dry_run
             )
             result.new_videos += channel_counts.new
             result.backfilled_videos += channel_counts.backfilled
@@ -163,7 +158,7 @@ def discover_all(
         except Exception as exc:
             result.channels_failed += 1
             errors = ch["consecutive_errors"] + 1
-            logger.warning("discover failed for channel %s after retry: %s", ch["channel_id"], exc)
+            logger.warning("discover failed for channel %s: %s", ch["channel_id"], exc)
             if not dry_run:
                 conn.execute(
                     """
@@ -188,20 +183,3 @@ def discover_all(
             jittered_sleep(delay_low, delay_high, dry_run=dry_run)
 
     return result
-
-
-def _discover_channel_with_retry(
-    conn: sqlite3.Connection,
-    channel_id: str,
-    fetch_fn,
-    dry_run: bool,
-    delay_low: float,
-    delay_high: float,
-) -> ChannelDiscoverCounts:
-    """Poll a channel once; on failure wait and retry once in the same run."""
-    try:
-        return discover_channel(conn, channel_id, fetch_fn=fetch_fn, dry_run=dry_run)
-    except Exception as exc:
-        logger.warning("discover failed for channel %s, retrying once: %s", channel_id, exc)
-        jittered_sleep(delay_low, delay_high, dry_run=dry_run)
-        return discover_channel(conn, channel_id, fetch_fn=fetch_fn, dry_run=dry_run)

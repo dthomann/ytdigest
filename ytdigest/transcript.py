@@ -65,6 +65,7 @@ class TranscriptOutcome:
     video_missing: bool = False
     blocked: bool = False
     reason: str | None = None
+    tier2_failed: bool = False
 
 
 # --------------------------------------------------------------------------------------
@@ -466,6 +467,8 @@ class TranscriptPhaseResult:
     aborted: bool = False
     abort_reason: str | None = None
     errors: list[str] = field(default_factory=list)
+    had_tier2_error: bool = False
+    retryable_ids: list[str] = field(default_factory=list)
 
 
 def process_video(
@@ -482,9 +485,12 @@ def process_video(
     now = utcnow_iso()
 
     outcome = tier1_fn(video_id, languages)
+    tier2_failed = False
 
     if not outcome.ok and not outcome.blocked and not (outcome.fatal and outcome.video_missing):
         outcome = tier2_fn(video_id, languages)
+        if not outcome.ok:
+            tier2_failed = True
 
     if (
         not outcome.ok
@@ -495,7 +501,12 @@ def process_video(
         duration = row["duration_seconds"] or 0
         max_seconds = config.values["whisper_max_duration_minutes"] * 60
         if duration <= max_seconds:
-            outcome = tier3_fn(video_id, config.secrets.get("GROQ_API_KEY", ""))
+            t3 = tier3_fn(video_id, config.secrets.get("GROQ_API_KEY", ""))
+            if t3.ok:
+                tier2_failed = False
+            outcome = t3
+
+    outcome.tier2_failed = tier2_failed
 
     if outcome.ok:
         clean_text = clean_transcript(outcome.segments)
@@ -604,10 +615,14 @@ def run_transcript_phase(
         result.attempted += 1
         outcome = process_video(conn, row, config, tier1_fn=tier1_fn, tier2_fn=tier2_fn, tier3_fn=tier3_fn)
 
+        if outcome.tier2_failed:
+            result.had_tier2_error = True
+
         if outcome.blocked:
             result.aborted = True
             result.abort_reason = outcome.reason
             result.errors.append(f"{row['video_id']}: {outcome.reason}")
+            result.retryable_ids.append(row["video_id"])
             break
 
         if outcome.ok:
@@ -624,6 +639,7 @@ def run_transcript_phase(
                 result.errors.append(f"{row['video_id']}: {outcome.reason}")
             else:
                 result.retrying += 1
+                result.retryable_ids.append(row["video_id"])
                 result.errors.append(f"{row['video_id']}: {outcome.reason}")
 
         if i < len(rows) - 1:

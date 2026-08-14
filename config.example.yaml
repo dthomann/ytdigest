@@ -28,6 +28,8 @@ enable_whisper_fallback: false
 whisper_max_duration_minutes: 120
 retry_backoff_hours: [6, 12, 24, 48, 96]
 max_transcript_attempts: 5
+scheduled_retry_delay_hours: 1    # scheduled runs: wait this long before a full-pipeline retry
+max_scheduled_retries: 3          # full-run follow-ups after RSS or yt-dlp failure (systemd timer only)
 
 # --- summarization ---
 summary_model: gemini-2.5-flash-lite

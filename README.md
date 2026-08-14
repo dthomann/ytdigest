@@ -106,7 +106,7 @@ ytdigest bot
 | `add-channel <url\|@handle\|UC…>`                                | Resolving a handle needs `YOUTUBE_API_KEY` (one API call)                              |
 | `import-channels <file>`                                         | Takeout CSV or newline list; UC ids need no network                                    |
 | `seed --since YYYY-MM-DD`                                        | Backfill — run once before the first real `run`                                        |
-| `run [--dry-run] [--limit N] [--channel telegram\|stdout\|file]` | Full pipeline; `--dry-run` touches nothing; `--limit` caps transcript fetches this run |
+| `run [--dry-run] [--limit N] [--channel …]`                      | Full pipeline. systemd adds `--scheduled` so RSS/yt-dlp failures retry the run in 1h   |
 | `discover [--dry-run]`                                           | Discovery phase only                                                                   |
 | `fetch-transcripts [--limit N]`                                  | Transcript phase only (3-tier chain, retry/backoff)                                    |
 | `summarize`                                                      | Summarize every video currently in `has_transcript`                                    |
@@ -189,6 +189,8 @@ Secrets never go here — see `.env.example`. Unknown keys and any key that look
 | `whisper_max_duration_minutes`    | `120`                   | Skip ASR fallback beyond this length (cost/time control).                                                                                                 |
 | `retry_backoff_hours`             | `[6, 12, 24, 48, 96]`   | Auto-captions are often missing for hours after upload — this is a retryable, not fatal, condition.                                                       |
 | `max_transcript_attempts`         | `5`                     | After this many retries, a video becomes `failed_permanent` (still listed once in the digest so nothing silently vanishes).                               |
+| `scheduled_retry_delay_hours`     | `1`                     | After a **scheduled** run, wait this long before retrying the full pipeline (RSS failure or yt-dlp/timedtext error). Manual/web/bot runs are not retried. |
+| `max_scheduled_retries`           | `3`                     | How many full-pipeline follow-ups to queue after a scheduled failure (T+1h, T+2h, T+3h).                                                                  |
 | `summary_model`                   | `gemini-2.5-flash-lite` | Cheap, fast, sufficient for one-paragraph summaries.                                                                                                      |
 | `summary_mode`                    | `sync`                  | `batch` is documented (50% cheaper, up to 24h latency) but not implemented.                                                                               |
 | `summary_words`                   | `[60, 100]`             | Target summary length.                                                                                                                                    |
@@ -465,7 +467,9 @@ ssh "$PI" 'sudo systemctl restart ytdigest-web'
 ```
 
 The daily timer picks up code changes on its next run; trigger manually with
-`sudo systemctl start ytdigest.service`.
+`sudo systemctl start ytdigest.service`. If that scheduled run fails RSS for any
+channel, or hits a yt-dlp (timedtext) transcript error, `ytdigest-retry.timer`
+runs the full pipeline again about an hour later, up to three times.
 
 ### Seed on the Pi
 
@@ -488,7 +492,8 @@ sudo cp systemd/*.service systemd/*.timer /etc/systemd/system/
 # home setup only — patch User and paths (see above)
 sudo systemctl daemon-reload
 sudo systemctl enable --now ytdigest.timer
-systemctl list-timers ytdigest.timer          # confirm next run time
+sudo systemctl enable --now ytdigest-retry.timer
+systemctl list-timers ytdigest.timer ytdigest-retry.timer
 journalctl -u ytdigest -f                     # watch a manual run
 sudo systemctl start ytdigest.service         # trigger one now
 ```

@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry ytdigest after scheduled RSS or yt-dlp failures
+
+[Timer]
+# Polls often enough to honor the 1h retry delay without running the pipeline hourly.
+OnCalendar=*:0/15
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

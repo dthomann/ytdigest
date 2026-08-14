@@ -428,6 +428,31 @@ def test_process_video_retryable_schedules_backoff(conn, config):
     assert updated["state"] == VideoState.NEEDS_TRANSCRIPT.value
 
 
+def test_process_video_records_tier2_failure(conn, config):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1")
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    outcome = tr.process_video(
+        conn, row, config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="no transcript yet"),
+        tier2_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="tier2: no json3"),
+    )
+    assert outcome.tier2_failed
+    assert not outcome.ok
+
+
+def test_process_video_tier1_block_is_not_tier2_failure(conn, config):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1")
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    outcome = tr.process_video(
+        conn, row, config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, blocked=True, reason="IP blocked"),
+        tier2_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="should not be called"),
+    )
+    assert not outcome.tier2_failed
+
+
 def test_process_video_max_attempts_reaches_failed_permanent(conn, config):
     insert_channel(conn, "UC1")
     insert_pending_video(conn, "v1", attempts=4)  # max_transcript_attempts default is 5
@@ -476,3 +501,18 @@ def test_run_transcript_phase_aborts_on_block(conn, config):
         "SELECT COUNT(*) AS n FROM videos WHERE state = 'needs_transcript'"
     ).fetchone()["n"]
     assert still_queued == 4  # 1 succeeded, 4 still queued (including the blocked one)
+
+
+def test_run_transcript_phase_flags_tier2_errors(conn, config):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1")
+
+    result = tr.run_transcript_phase(
+        conn,
+        config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="no transcript yet"),
+        tier2_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="tier2 download error"),
+    )
+    assert result.had_tier2_error
+    assert result.retryable_ids == ["v1"]
+    assert result.retrying == 1

@@ -45,7 +45,7 @@ sudo chmod 440 /etc/sudoers.d/ytdigest</pre>
 
 <section class="settings-section">
   <h2>Daily run timer</h2>
-  <p class="meta">systemd timer (<code>ytdigest.timer</code>) — runs the pipeline on schedule.</p>
+  <p class="meta">systemd timer (<code>ytdigest.timer</code>) — runs the pipeline on schedule. RSS or yt-dlp failures retry the full run about an hour later (<code>ytdigest-retry.timer</code>).</p>
   <p class="status-line">
     {% if snapshot.timer.installed %}
       {% if snapshot.timer.active %}<span class="success">Active</span>{% elif snapshot.timer.enabled %}<span class="meta">Enabled</span>{% else %}<span class="meta">Installed, disabled</span>{% endif %}

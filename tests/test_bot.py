@@ -60,7 +60,7 @@ def test_format_status(conn):
     )
     conn.execute(
         "INSERT INTO runs (started_at, status, discovered, notes) "
-        "VALUES ('now', 'partial', 5, '46/59 channels failed RSS poll after retry')"
+        "VALUES ('now', 'partial', 5, '46/59 channels failed RSS poll')"
     )
     conn.commit()
     text = bot_mod.format_status(conn)
@@ -69,7 +69,7 @@ def test_format_status(conn):
     assert "WARNING: Andrew Steele — 2 consecutive errors" in text
     assert "timeout" in text
     assert "1 with poll errors" in text
-    assert "Notes: 46/59 channels failed RSS poll after retry" in text
+    assert "Notes: 46/59 channels failed RSS poll" in text
     assert "WARNING: Healthy" not in text
 
 
@@ -154,13 +154,13 @@ def test_format_run_result_includes_channel_failures():
             discovered=5,
             summarized=0,
             notes=[
-                "46/59 channels failed RSS poll after retry",
+                "46/59 channels failed RSS poll",
                 "Andrew Steele (UCxxx) poll failed (2 consecutive): timeout",
             ],
         )
     )
     assert "status=partial" in text
-    assert "46/59 channels failed RSS poll after retry" in text
+    assert "46/59 channels failed RSS poll" in text
     assert "Andrew Steele" in text
 
 

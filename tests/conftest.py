@@ -78,6 +78,8 @@ def config(tmp_path):
             "whisper_max_duration_minutes": 120,
             "retry_backoff_hours": [6, 12, 24, 48, 96],
             "max_transcript_attempts": 5,
+            "scheduled_retry_delay_hours": 1,
+            "max_scheduled_retries": 3,
             "summary_model": "gemini-2.5-flash-lite",
             "summary_mode": "sync",
             "summary_words": [60, 100],
