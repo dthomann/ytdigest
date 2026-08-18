@@ -75,7 +75,7 @@ def install_context_from_config(config: Config) -> InstallContext:
         raise SystemdError("config_path is required for service management")
     config_path = config.config_path.resolve()
     install_dir = config_path.parent
-    service_user = pwd.getpwuid(os.getuid()).pw_name
+    service_user = pwd.getpwuid(install_dir.stat().st_uid).pw_name
     ytdigest_bin = install_dir / "venv" / "bin" / "ytdigest"
     if not ytdigest_bin.is_file():
         raise SystemdError(f"ytdigest binary not found at {ytdigest_bin}")
