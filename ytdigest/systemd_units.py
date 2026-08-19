@@ -127,11 +127,11 @@ def _unit_path(name: str) -> Path:
 HANDOFF_MARKER = "ytdigest:handoff"
 
 
-def _run(cmd: list[str], *, privileged: bool = False) -> subprocess.CompletedProcess[str]:
+def _run(cmd: list[str], *, privileged: bool = False, timeout: int = 10) -> subprocess.CompletedProcess[str]:
     if privileged and os.geteuid() != 0:
         cmd = ["sudo", "-n", *cmd]
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=10)
+        return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
     except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
         result = subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr="command unavailable")
         return result
@@ -231,8 +231,8 @@ def _remove_unit_file(name: str, *, privileged: bool) -> None:
         raise SystemdError(result.stderr.strip() or f"failed to remove {name}")
 
 
-def _systemctl(*args: str, privileged: bool) -> None:
-    result = _run(["systemctl", *args], privileged=privileged)
+def _systemctl(*args: str, privileged: bool, timeout: int = 10) -> None:
+    result = _run(["systemctl", *args], privileged=privileged, timeout=timeout)
     if result.returncode != 0:
         msg = (result.stderr or result.stdout or "").strip()
         raise SystemdError(msg or f"systemctl {' '.join(args)} failed")
@@ -385,7 +385,7 @@ def install_web_service(config: Config) -> InstallWebResult:
         # Re-install while already under systemd — bounce the service.
         _write_unit_file(UNIT_NAMES["web"], content, privileged=privileged)
         _daemon_reload(privileged=privileged)
-        _systemctl("restart", "ytdigest-web", privileged=privileged)
+        _systemctl("restart", "ytdigest-web", privileged=privileged, timeout=60)
         return InstallWebResult(message="Web service updated and restarted")
 
     if port_busy and not handoff:
@@ -436,7 +436,7 @@ def restart_web_service(config: Config) -> str:
     web = get_unit_status(UNIT_NAMES["web"], "Web UI")
     if not web.installed:
         return "Web service not installed — skipped restart"
-    _systemctl("restart", "ytdigest-web", privileged=privileged)
+    _systemctl("restart", "ytdigest-web", privileged=privileged, timeout=60)
     return "Web service restarted"
 
 
@@ -453,7 +453,7 @@ def restart_bot_service(config: Config) -> str:
         return "Telegram Q&A bot not installed — skipped restart"
     if not bot.active:
         return "Telegram Q&A bot not running — skipped restart"
-    _systemctl("restart", "ytdigest-bot", privileged=privileged)
+    _systemctl("restart", "ytdigest-bot", privileged=privileged, timeout=60)
     return "Telegram Q&A bot restarted"
 
 

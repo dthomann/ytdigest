@@ -159,7 +159,7 @@ def test_restart_web_service(mock_sudo, mock_status, mock_systemctl, install_tre
     )
     message = restart_web_service(config)
     assert "restarted" in message.lower()
-    mock_systemctl.assert_called_once_with("restart", "ytdigest-web", privileged=True)
+    mock_systemctl.assert_called_once_with("restart", "ytdigest-web", privileged=True, timeout=60)
 
 
 @patch("ytdigest.systemd_units.get_unit_status")
@@ -199,7 +199,7 @@ def test_restart_bot_service(mock_sudo, mock_status, mock_systemctl, install_tre
     )
     message = restart_bot_service(config)
     assert "restarted" in message.lower()
-    mock_systemctl.assert_called_once_with("restart", "ytdigest-bot", privileged=True)
+    mock_systemctl.assert_called_once_with("restart", "ytdigest-bot", privileged=True, timeout=60)
 
 
 @patch("ytdigest.systemd_units.get_unit_status")
