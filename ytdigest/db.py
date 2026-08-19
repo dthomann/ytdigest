@@ -92,6 +92,7 @@ MIGRATIONS = [
         value   TEXT NOT NULL
     )
     """,
+    "ALTER TABLE channels ADD COLUMN uploads_playlist_id TEXT",
 ]
 
 

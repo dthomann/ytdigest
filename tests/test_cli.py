@@ -12,6 +12,45 @@ RSS_BY_CHANNEL = {
     "UClivestream000000000000": "rss_livestream_channel.xml",
 }
 
+UPLOADS_BY_CHANNEL = {
+    "UCnormal0000000000000000": "UUnormal0000000000000000",
+    "UCshorts0000000000000000": "UUshorts0000000000000000",
+    "UClivestream000000000000": "UUlivestream000000000000",
+}
+
+PLAYLIST_ITEMS_BY_PLAYLIST = {
+    "UUnormal0000000000000000": [
+        {
+            "contentDetails": {
+                "videoId": "vid_normal_001",
+                "videoPublishedAt": "2026-08-03T14:00:00+00:00",
+            }
+        },
+        {
+            "contentDetails": {
+                "videoId": "vid_normal_002",
+                "videoPublishedAt": "2026-08-02T09:00:00+00:00",
+            }
+        },
+    ],
+    "UUshorts0000000000000000": [
+        {
+            "contentDetails": {
+                "videoId": "vid_short_001",
+                "videoPublishedAt": "2026-08-04T08:00:00+00:00",
+            }
+        },
+    ],
+    "UUlivestream000000000000": [
+        {
+            "contentDetails": {
+                "videoId": "vid_live_upcoming",
+                "videoPublishedAt": "2026-08-05T06:00:00+00:00",
+            }
+        },
+    ],
+}
+
 VIDEO_ITEM_BY_ID = {
     "vid_normal_001": "videos_normal.json",
     "vid_normal_002": "videos_podcast_2h.json",
@@ -38,9 +77,23 @@ class FakeResponse:
 
 
 def fake_get(url, params=None, headers=None, timeout=None):
-    if "feeds/videos.xml" in url:
-        channel_id = url.split("channel_id=")[1]
-        return FakeResponse(text=load_fixture_text(RSS_BY_CHANNEL[channel_id]))
+    if "youtube/v3/channels" in url:
+        ids = params["id"].split(",")
+        items = []
+        for cid in ids:
+            uploads = UPLOADS_BY_CHANNEL.get(cid)
+            if uploads:
+                items.append(
+                    {
+                        "id": cid,
+                        "contentDetails": {"relatedPlaylists": {"uploads": uploads}},
+                    }
+                )
+        return FakeResponse(json_data={"items": items})
+    if "youtube/v3/playlistItems" in url:
+        playlist_id = params["playlistId"]
+        items = PLAYLIST_ITEMS_BY_PLAYLIST.get(playlist_id, [])
+        return FakeResponse(json_data={"items": items})
     if "youtube/v3/videos" in url:
         ids = params["id"].split(",")
         items = []
@@ -275,7 +328,7 @@ def test_run_pipeline_partial_when_rss_channels_fail(conn, config, monkeypatch, 
 
     result = run_pipeline(conn, config, use_lock=False, channel="stdout")
     assert result.status == "partial"
-    assert result.notes[0] == "46/59 channels failed RSS poll"
+    assert result.notes[0] == "46/59 channels failed discover poll"
     assert "Andrew Steele" in result.notes[1]
     row = conn.execute("SELECT status, notes FROM runs ORDER BY id DESC LIMIT 1").fetchone()
     assert row["status"] == "partial"

@@ -50,23 +50,36 @@ def _video_ids_needing_metadata(conn) -> list[str]:
 
 
 def discover_metadata_classify(conn, config):
-    discover_result = discover.discover_all(conn, config, dry_run=False)
+    api_key = config.secrets.get("YOUTUBE_API_KEY")
+    quota_daily = config.values["youtube_api_quota_daily"]
+    quota_warn_fraction = config.values["youtube_api_quota_warn_fraction"]
+
+    discover_result = discover.discover_all(
+        conn,
+        config,
+        api_key=api_key,
+        dry_run=False,
+        quota_used_today=0,
+        quota_daily=quota_daily,
+        quota_warn_fraction=quota_warn_fraction,
+    )
     metadata_ids = _video_ids_needing_metadata(conn)
 
     quota_error = None
-    api_units = 0
-    api_key = config.secrets.get("YOUTUBE_API_KEY")
+    api_units = discover_result.api_units
     if metadata_ids:
         if not api_key:
             quota_error = "YOUTUBE_API_KEY not set — cannot fetch metadata"
         else:
             try:
-                items, missing, api_units = metadata.fetch_all_metadata(
+                items, missing, meta_units = metadata.fetch_all_metadata(
                     metadata_ids,
                     api_key,
-                    quota_daily=config.values["youtube_api_quota_daily"],
-                    quota_warn_fraction=config.values["youtube_api_quota_warn_fraction"],
+                    quota_used_today=api_units,
+                    quota_daily=quota_daily,
+                    quota_warn_fraction=quota_warn_fraction,
                 )
+                api_units += meta_units
                 metadata.apply_metadata(conn, items, missing)
             except metadata.QuotaExceededError as exc:
                 quota_error = str(exc)
@@ -267,7 +280,7 @@ def run_pipeline(
                 status = "partial"
                 notes.append(
                     f"{discover_result.channels_failed}/{discover_result.channels_polled} "
-                    "channels failed RSS poll"
+                    "channels failed discover poll"
                 )
             if discover_result.dead_channel_warnings:
                 notes.extend(discover_result.dead_channel_warnings)

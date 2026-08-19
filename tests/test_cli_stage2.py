@@ -248,15 +248,6 @@ EMPTY_FEED_XML = (
 
 
 def test_run_sends_alert_on_quota_exceeded(tmp_path, monkeypatch, capsys):
-    class EmptyFeedResponse:
-        text = EMPTY_FEED_XML
-
-        def raise_for_status(self):
-            pass
-
-    monkeypatch.setattr(
-        "ytdigest.discover.requests.get", lambda url, headers=None, timeout=None: EmptyFeedResponse()
-    )
     monkeypatch.setattr("ytdigest.cli.transcript_mod.run_transcript_phase", fake_transcript_phase)
     monkeypatch.setattr("ytdigest.cli.summarize_mod.run_summarize_phase", fake_summarize_phase)
 

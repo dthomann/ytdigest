@@ -124,7 +124,7 @@ def cmd_seed(args) -> None:
 
     print(
         f"Seeded: {discover_result.new_videos} new, {discover_result.backfilled_videos} backfilled "
-        f"in RSS, {seeded} marked delivered (needs_transcript), cutoff={args.since}"
+        f"in discover, {seeded} marked delivered (needs_transcript), cutoff={args.since}"
     )
 
 

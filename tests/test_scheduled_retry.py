@@ -86,7 +86,7 @@ def test_scheduled_feed_failure_queues_retry(conn, config, monkeypatch):
         conn, config, use_lock=False, channel="stdout", scheduled=True, now=NOW
     )
     assert result.status == "partial"
-    assert "1/2 channels failed RSS poll" in result.notes[0]
+    assert "1/2 channels failed discover poll" in result.notes[0]
     assert any("scheduled retry 1/3" in n for n in result.notes)
     assert scheduled_retry.retry_attempt(conn) == 1
 
