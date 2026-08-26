@@ -5,7 +5,8 @@ Tier 3: audio + remote ASR (Groq whisper), only if enable_whisper_fallback.
 
 Politeness is enforced by the caller (run_transcript_phase): strictly sequential, jittered
 delay between fetches, a hard cap per run, and immediate phase-abort on any block/rate-limit
-signal.
+signal (including youtube-transcript-api wrapping HTTP 429 as YouTubeRequestFailed — do not
+fall through to tier2 timedtext on the same throttle).
 """
 from __future__ import annotations
 
@@ -139,6 +140,20 @@ def write_transcript_files(
 
 
 # --------------------------------------------------------------------------------------
+# Rate-limit detection (shared across tiers)
+# --------------------------------------------------------------------------------------
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    """True for HTTP 429 / 'too many requests', including youtube-transcript-api wrappers."""
+    response = getattr(exc, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 429:
+        return True
+    msg = str(exc).lower()
+    return "429" in msg or "too many requests" in msg
+
+
+# --------------------------------------------------------------------------------------
 # Tier 1 — youtube-transcript-api
 # --------------------------------------------------------------------------------------
 
@@ -172,8 +187,12 @@ def fetch_tier1(video_id: str, languages: list[str], ytt_api=None) -> Transcript
     except RequestBlocked:
         return TranscriptOutcome(ok=False, blocked=True, reason="request blocked / rate limited (tier1)")
     except CouldNotRetrieveTranscript as exc:
+        if _is_rate_limited(exc):
+            return TranscriptOutcome(ok=False, blocked=True, reason=f"tier1 blocked: {exc}")
         return TranscriptOutcome(ok=False, reason=f"tier1 list error: {exc}")
     except requests.RequestException as exc:
+        if _is_rate_limited(exc):
+            return TranscriptOutcome(ok=False, blocked=True, reason=f"tier1 blocked: {exc}")
         return TranscriptOutcome(ok=False, reason=f"network error (tier1): {exc}")
 
     transcript = _select_transcript(transcript_list, languages)
@@ -187,9 +206,15 @@ def fetch_tier1(video_id: str, languages: list[str], ytt_api=None) -> Transcript
     except RequestBlocked:
         return TranscriptOutcome(ok=False, blocked=True, reason="request blocked / rate limited (tier1)")
     except CouldNotRetrieveTranscript as exc:
+        if _is_rate_limited(exc):
+            return TranscriptOutcome(ok=False, blocked=True, reason=f"tier1 blocked: {exc}")
         return TranscriptOutcome(ok=False, reason=f"tier1 fetch error: {exc}")
     except XmlParseError as exc:
         return TranscriptOutcome(ok=False, reason=f"tier1 fetch error: invalid transcript XML ({exc})")
+    except requests.RequestException as exc:
+        if _is_rate_limited(exc):
+            return TranscriptOutcome(ok=False, blocked=True, reason=f"tier1 blocked: {exc}")
+        return TranscriptOutcome(ok=False, reason=f"network error (tier1): {exc}")
 
     segments = [{"text": s.text, "start": s.start} for s in fetched.snippets]
     return TranscriptOutcome(
@@ -225,15 +250,6 @@ def _subtitle_url_is_translation(url: str | None) -> bool:
     if not url:
         return False
     return bool(parse_qs(urlparse(url).query).get("tlang"))
-
-
-def _request_is_rate_limited(exc: requests.RequestException) -> bool:
-    response = getattr(exc, "response", None)
-    if response is not None and response.status_code == 429:
-        return True
-    msg = str(exc).lower()
-    return "429" in msg or "too many requests" in msg
-
 
 def _ytdlp_json3_candidates(
     info: dict, languages: list[str]
@@ -327,7 +343,7 @@ def fetch_tier2(
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
-        if _request_is_rate_limited(exc):
+        if _is_rate_limited(exc):
             return TranscriptOutcome(ok=False, blocked=True, reason=f"tier2 blocked: {exc}")
         return TranscriptOutcome(ok=False, reason=f"tier2 download error: {exc}")
 

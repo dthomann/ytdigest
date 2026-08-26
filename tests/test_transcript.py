@@ -10,6 +10,7 @@ from youtube_transcript_api import (
     RequestBlocked,
     TranscriptsDisabled,
     VideoUnavailable,
+    YouTubeRequestFailed,
 )
 
 from ytdigest import transcript as tr
@@ -209,6 +210,34 @@ def test_tier1_invalid_xml_on_fetch_is_retryable():
     assert "invalid transcript XML" in outcome.reason
 
 
+def _youtube_request_failed_429(video_id: str = "vid") -> YouTubeRequestFailed:
+    response = requests.models.Response()
+    response.status_code = 429
+    response.url = f"https://www.youtube.com/api/timedtext?v={video_id}"
+    http_err = requests.HTTPError(
+        f"429 Client Error: Too Many Requests for url: {response.url}",
+        response=response,
+    )
+    return YouTubeRequestFailed(video_id, http_err)
+
+
+def test_tier1_youtube_request_failed_429_on_list_is_blocked():
+    api = FakeYttApi(list_exc=_youtube_request_failed_429())
+    outcome = tr.fetch_tier1("vid", ["en"], ytt_api=api)
+    assert outcome.blocked
+    assert not outcome.fatal
+    assert "tier1 blocked" in outcome.reason
+
+
+def test_tier1_youtube_request_failed_429_on_fetch_is_blocked():
+    manual = FakeTranscript("en", False, [], fetch_exc=_youtube_request_failed_429())
+    api = FakeYttApi(list_result=FakeTranscriptList(manual=manual))
+    outcome = tr.fetch_tier1("vid", ["en"], ytt_api=api)
+    assert outcome.blocked
+    assert not outcome.fatal
+    assert "tier1 blocked" in outcome.reason
+
+
 # --------------------------------------------------------------------------------------
 # Tier 2
 # --------------------------------------------------------------------------------------
@@ -397,6 +426,31 @@ def test_process_video_falls_through_to_tier2_on_retryable_tier1(conn, config):
     )
     updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
     assert updated["state"] == VideoState.HAS_TRANSCRIPT.value
+
+
+def test_process_video_tier1_429_skips_tier2(conn, config):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1", attempts=1)
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    called = {"tier2": False}
+
+    def boom_tier2(vid, langs):
+        called["tier2"] = True
+        return tr.TranscriptOutcome(ok=False, reason="should not run")
+
+    outcome = tr.process_video(
+        conn, row, config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
+            ok=False, blocked=True, reason="tier1 blocked: 429 Too Many Requests"
+        ),
+        tier2_fn=boom_tier2,
+    )
+    assert outcome.blocked
+    assert not called["tier2"]
+    assert not outcome.tier2_failed
+    updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    assert updated["attempts"] == 1  # not bumped
+    assert "tier1 blocked" in updated["last_error"]
 
 
 def test_process_video_blocked_does_not_bump_attempts(conn, config):
