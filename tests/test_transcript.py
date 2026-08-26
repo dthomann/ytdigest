@@ -514,14 +514,14 @@ def test_process_video_tier1_429_retries_via_proxyscrape(conn, config, tmp_path)
 
     def proxy_ok(vid, langs):
         called["proxy"] += 1
-        return make_success_outcome(source="captions_api_proxy")
+        return make_success_outcome(source="ytdlp_proxy")
 
     outcome = tr.process_video(
         conn, row, config,
         tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
             ok=False, blocked=True, reason="tier1 blocked: 429"
         ),
-        tier1_proxy_fn=proxy_ok,
+        proxy_fn=proxy_ok,
         tier2_fn=boom_tier2,
     )
     assert outcome.ok
@@ -529,7 +529,7 @@ def test_process_video_tier1_429_retries_via_proxyscrape(conn, config, tmp_path)
     assert not called["tier2"]
     updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
     assert updated["state"] == VideoState.HAS_TRANSCRIPT.value
-    assert updated["transcript_source"] == "captions_api_proxy"
+    assert updated["transcript_source"] == "ytdlp_proxy"
 
 
 def test_process_video_proxy_fail_does_not_fall_through_to_tier2(conn, config):
@@ -546,7 +546,7 @@ def test_process_video_proxy_fail_does_not_fall_through_to_tier2(conn, config):
     def proxy_fail(vid, langs):
         called["proxy"] += 1
         return tr.TranscriptOutcome(
-            ok=False, reason="network error (tier1): proxy tunnel failed"
+            ok=False, reason="tier2 download error: proxy tunnel failed"
         )
 
     outcome = tr.process_video(
@@ -556,7 +556,7 @@ def test_process_video_proxy_fail_does_not_fall_through_to_tier2(conn, config):
         tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
             ok=False, blocked=True, reason="tier1 blocked: 429"
         ),
-        tier1_proxy_fn=proxy_fail,
+        proxy_fn=proxy_fail,
         tier2_fn=boom_tier2,
     )
     assert called["proxy"] == tr.PROXYSCRAPE_MAX_ATTEMPTS
@@ -582,9 +582,9 @@ def test_process_video_proxy_succeeds_on_third_attempt(conn, config, tmp_path):
         called["proxy"] += 1
         if called["proxy"] < 3:
             return tr.TranscriptOutcome(
-                ok=False, reason="tier1 fetch error: invalid transcript XML"
+                ok=False, reason="tier2: no json3 subtitle track available"
             )
-        return make_success_outcome(source="captions_api_proxy")
+        return make_success_outcome(source="ytdlp_proxy")
 
     outcome = tr.process_video(
         conn,
@@ -593,14 +593,53 @@ def test_process_video_proxy_succeeds_on_third_attempt(conn, config, tmp_path):
         tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
             ok=False, blocked=True, reason="tier1 blocked: 429"
         ),
-        tier1_proxy_fn=proxy_flaky,
+        proxy_fn=proxy_flaky,
         tier2_fn=boom_tier2,
     )
     assert outcome.ok
     assert called["proxy"] == 3
     assert not called["tier2"]
     updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
-    assert updated["transcript_source"] == "captions_api_proxy"
+    assert updated["transcript_source"] == "ytdlp_proxy"
+
+
+def test_process_video_proxy_path_skips_watch_html(conn, config, monkeypatch, tmp_path):
+    """Residential retry must call yt-dlp via proxy only — never ytt-api watch HTML."""
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1")
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    config.secrets["PROXYSCRAPE_USERNAME"] = "alice"
+    config.secrets["PROXYSCRAPE_PASSWORD"] = "pw"
+    seen = {"tier1_proxy": 0, "tier2_proxy": 0}
+
+    def tracking_fetch_tier1(vid, langs, ytt_api=None, proxy_url=None):
+        if proxy_url:
+            seen["tier1_proxy"] += 1
+            raise AssertionError("lean proxy path must not call fetch_tier1 via proxy")
+        return tr.TranscriptOutcome(ok=False, blocked=True, reason="tier1 blocked: 429")
+
+    def tracking_fetch_tier2(vid, langs, proxy_url=None, **kwargs):
+        assert proxy_url, "proxy retry must pass proxy_url to fetch_tier2"
+        seen["tier2_proxy"] += 1
+        return make_success_outcome(source="ytdlp_proxy")
+
+    monkeypatch.setattr(tr, "fetch_tier1", tracking_fetch_tier1)
+    monkeypatch.setattr(tr, "fetch_tier2", tracking_fetch_tier2)
+
+    outcome = tr.process_video(
+        conn,
+        row,
+        config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
+            ok=False, blocked=True, reason="tier1 blocked: 429"
+        ),
+        tier2_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="home tier2"),
+    )
+    assert outcome.ok
+    assert seen["tier1_proxy"] == 0
+    assert seen["tier2_proxy"] == 1
+    updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    assert updated["transcript_source"] == "ytdlp_proxy"
 
 
 def test_fetch_tier2_uses_proxy_url_for_download(monkeypatch):

@@ -9,9 +9,9 @@ signal (including youtube-transcript-api wrapping HTTP 429 as YouTubeRequestFail
 fall through to tier2 timedtext on the same throttle).
 
 When PROXYSCRAPE_USERNAME + PROXYSCRAPE_PASSWORD are set, a tier1 block/429 is retried up to
-3 times via ProxyScrape residential (fresh sticky session each attempt). Each attempt tries
-youtube-transcript-api first, then yt-dlp timedtext through the same proxy — HTML-scraped
-caption URLs often return empty 200s; yt-dlp client URLs still work. Never fall through to
+3 times via ProxyScrape residential using **yt-dlp only** (fresh sticky session each attempt).
+We skip youtube-transcript-api over the proxy — its watch-HTML timedtext URLs return empty 200s
+and waste ~1.5MB per try; yt-dlp client caption URLs still work. Never fall through to
 unproxied tier2/3 on the home IP after a rate-limit block.
 """
 from __future__ import annotations
@@ -579,9 +579,12 @@ def process_video(
     tier1_fn=fetch_tier1,
     tier2_fn=fetch_tier2,
     tier3_fn=fetch_tier3,
-    tier1_proxy_fn=None,
+    proxy_fn=None,
 ) -> TranscriptOutcome:
-    """Run the tier chain for one video and persist the result. Does not sleep."""
+    """Run the tier chain for one video and persist the result. Does not sleep.
+
+    ``proxy_fn(video_id, languages)`` overrides the ProxyScrape yt-dlp retry (tests).
+    """
     languages = config.values["transcript_languages"]
     video_id = row["video_id"]
     now = utcnow_iso()
@@ -592,35 +595,25 @@ def process_video(
     proxy_attempted = False
 
     if outcome.blocked:
-        use_injected = tier1_proxy_fn is not None
+        use_injected = proxy_fn is not None
         can_proxy = use_injected or build_proxyscrape_proxy_url(config.secrets) is not None
         if can_proxy:
             proxy_attempted = True
             for attempt in range(1, PROXYSCRAPE_MAX_ATTEMPTS + 1):
                 logger.info(
-                    "tier1 blocked for %s; ProxyScrape residential attempt %d/%d",
+                    "tier1 blocked for %s; ProxyScrape yt-dlp attempt %d/%d",
                     video_id,
                     attempt,
                     PROXYSCRAPE_MAX_ATTEMPTS,
                 )
                 if use_injected:
-                    outcome = tier1_proxy_fn(video_id, languages)
+                    outcome = proxy_fn(video_id, languages)
                 else:
+                    # Lean path: yt-dlp via residential only (no watch-HTML / ytt-api).
                     proxy_url = build_proxyscrape_proxy_url(
                         config.secrets, video_id=video_id, attempt=attempt
                     )
-                    outcome = fetch_tier1(video_id, languages, proxy_url=proxy_url)
-                    if (
-                        not outcome.ok
-                        and not outcome.blocked
-                        and not (outcome.fatal and outcome.video_missing)
-                    ):
-                        logger.info(
-                            "tier1 via proxy failed for %s (%s); trying yt-dlp via same proxy",
-                            video_id,
-                            outcome.reason,
-                        )
-                        outcome = fetch_tier2(video_id, languages, proxy_url=proxy_url)
+                    outcome = fetch_tier2(video_id, languages, proxy_url=proxy_url)
                 if outcome.ok:
                     break
                 logger.warning(

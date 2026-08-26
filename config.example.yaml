@@ -25,7 +25,7 @@ transcript_languages: [en]         # native caption tracks only; summaries use o
 transcript_delay_seconds: [2, 5]
 max_transcript_fetches_per_run: 40
 transcript_lookback_days: 1        # default: today + yesterday; use `run --catch-up` for older pending
-# On tier1 429, set PROXYSCRAPE_* in .env — retries up to 3x via residential (ytt then yt-dlp)
+# On tier1 429, set PROXYSCRAPE_* in .env — retries up to 3x via residential yt-dlp (no watch HTML)
 enable_whisper_fallback: false
 whisper_max_duration_minutes: 120
 retry_backoff_hours: [6, 12, 24, 48, 96]
