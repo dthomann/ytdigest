@@ -22,6 +22,11 @@ _ENV_KEYS = (
     "YOUTUBE_OAUTH_CLIENT_ID",
     "YOUTUBE_OAUTH_CLIENT_SECRET",
     "WEB_AUTH_TOKEN",
+    "PROXYSCRAPE_USERNAME",
+    "PROXYSCRAPE_PASSWORD",
+    "PROXYSCRAPE_HOST",
+    "PROXYSCRAPE_PORT",
+    "PROXYSCRAPE_COUNTRY",
 )
 
 
@@ -100,6 +105,11 @@ def config(tmp_path):
             "YOUTUBE_OAUTH_CLIENT_ID": "",
             "YOUTUBE_OAUTH_CLIENT_SECRET": "",
             "WEB_AUTH_TOKEN": "",
+            "PROXYSCRAPE_USERNAME": "",
+            "PROXYSCRAPE_PASSWORD": "",
+            "PROXYSCRAPE_HOST": "",
+            "PROXYSCRAPE_PORT": "",
+            "PROXYSCRAPE_COUNTRY": "",
         },
         config_path=None,
     )

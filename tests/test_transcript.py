@@ -238,6 +238,38 @@ def test_tier1_youtube_request_failed_429_on_fetch_is_blocked():
     assert "tier1 blocked" in outcome.reason
 
 
+def test_build_proxyscrape_proxy_url_requires_credentials():
+    assert tr.build_proxyscrape_proxy_url({}) is None
+    assert tr.build_proxyscrape_proxy_url({"PROXYSCRAPE_USERNAME": "u"}) is None
+
+
+def test_build_proxyscrape_proxy_url_adds_country_and_sticky_session():
+    url = tr.build_proxyscrape_proxy_url(
+        {
+            "PROXYSCRAPE_USERNAME": "alice",
+            "PROXYSCRAPE_PASSWORD": "s3cret!",
+            "PROXYSCRAPE_COUNTRY": "ch",
+        },
+        video_id="wiZYi0utv7Q",
+    )
+    assert url is not None
+    assert url.startswith("http://alice-country-ch-session-wiZYi0utv7Q-lifetime-5:")
+    assert "@rp.scrapegw.com:6060" in url
+    assert "s3cret%21" in url  # password URL-encoded
+
+
+def test_build_proxyscrape_proxy_url_respects_host_port_overrides():
+    url = tr.build_proxyscrape_proxy_url(
+        {
+            "PROXYSCRAPE_USERNAME": "bob",
+            "PROXYSCRAPE_PASSWORD": "pw",
+            "PROXYSCRAPE_HOST": "custom.example",
+            "PROXYSCRAPE_PORT": "8080",
+        }
+    )
+    assert url == "http://bob:pw@custom.example:8080"
+
+
 # --------------------------------------------------------------------------------------
 # Tier 2
 # --------------------------------------------------------------------------------------
@@ -344,9 +376,9 @@ def insert_pending_video(conn, video_id, channel_id="UC1", duration=300, attempt
     conn.commit()
 
 
-def make_success_outcome():
+def make_success_outcome(source="captions_api"):
     return tr.TranscriptOutcome(
-        ok=True, source="captions_api", language="en", is_auto=True,
+        ok=True, source=source, language="en", is_auto=True,
         segments=[{"text": "hello world " * 60, "start": 0.0}],
     )
 
@@ -451,6 +483,36 @@ def test_process_video_tier1_429_skips_tier2(conn, config):
     updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
     assert updated["attempts"] == 1  # not bumped
     assert "tier1 blocked" in updated["last_error"]
+
+
+def test_process_video_tier1_429_retries_via_proxyscrape(conn, config, tmp_path):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1")
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    called = {"proxy": 0, "tier2": False}
+
+    def boom_tier2(vid, langs):
+        called["tier2"] = True
+        return tr.TranscriptOutcome(ok=False, reason="should not run")
+
+    def proxy_ok(vid, langs):
+        called["proxy"] += 1
+        return make_success_outcome(source="captions_api_proxy")
+
+    outcome = tr.process_video(
+        conn, row, config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
+            ok=False, blocked=True, reason="tier1 blocked: 429"
+        ),
+        tier1_proxy_fn=proxy_ok,
+        tier2_fn=boom_tier2,
+    )
+    assert outcome.ok
+    assert called["proxy"] == 1
+    assert not called["tier2"]
+    updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    assert updated["state"] == VideoState.HAS_TRANSCRIPT.value
+    assert updated["transcript_source"] == "captions_api_proxy"
 
 
 def test_process_video_blocked_does_not_bump_attempts(conn, config):

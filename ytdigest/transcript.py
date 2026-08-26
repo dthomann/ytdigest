@@ -7,6 +7,9 @@ Politeness is enforced by the caller (run_transcript_phase): strictly sequential
 delay between fetches, a hard cap per run, and immediate phase-abort on any block/rate-limit
 signal (including youtube-transcript-api wrapping HTTP 429 as YouTubeRequestFailed — do not
 fall through to tier2 timedtext on the same throttle).
+
+When PROXYSCRAPE_USERNAME + PROXYSCRAPE_PASSWORD are set, a tier1 block/429 is retried once
+via ProxyScrape residential before aborting.
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from xml.etree.ElementTree import ParseError as XmlParseError
 
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 import yt_dlp
@@ -36,6 +39,7 @@ from youtube_transcript_api import (
     TranscriptsDisabled,
     VideoUnavailable,
 )
+from youtube_transcript_api.proxies import GenericProxyConfig
 
 from .models import VideoState
 from .util import collapse_whitespace, is_youtube_video_id, jittered_sleep, utcnow_iso
@@ -48,6 +52,10 @@ BRACKET_ARTIFACT_RE = re.compile(
 
 WORDS_PER_MINUTE_LOW = 100
 WORDS_PER_MINUTE_HIGH = 200
+
+# ProxyScrape Regular Residential defaults (override via PROXYSCRAPE_HOST / PROXYSCRAPE_PORT).
+PROXYSCRAPE_DEFAULT_HOST = "rp.scrapegw.com"
+PROXYSCRAPE_DEFAULT_PORT = "6060"
 
 
 # --------------------------------------------------------------------------------------
@@ -153,6 +161,40 @@ def _is_rate_limited(exc: BaseException) -> bool:
     return "429" in msg or "too many requests" in msg
 
 
+def build_proxyscrape_proxy_url(secrets: dict, *, video_id: str | None = None) -> str | None:
+    """Build an HTTP proxy URL for ProxyScrape residential, or None if not configured.
+
+    Credentials come from .env (PROXYSCRAPE_USERNAME / PROXYSCRAPE_PASSWORD). Optional:
+    PROXYSCRAPE_HOST, PROXYSCRAPE_PORT, PROXYSCRAPE_COUNTRY (e.g. ``ch`` / ``us``).
+    When ``video_id`` is set, a short sticky session is appended so list+fetch share one IP.
+    """
+    user = (secrets.get("PROXYSCRAPE_USERNAME") or "").strip()
+    password = secrets.get("PROXYSCRAPE_PASSWORD") or ""
+    if not user or not password:
+        return None
+
+    host = (secrets.get("PROXYSCRAPE_HOST") or PROXYSCRAPE_DEFAULT_HOST).strip()
+    port = str(secrets.get("PROXYSCRAPE_PORT") or PROXYSCRAPE_DEFAULT_PORT).strip()
+    country = (secrets.get("PROXYSCRAPE_COUNTRY") or "").strip().lower()
+    if country and f"-country-{country}" not in user.lower():
+        user = f"{user}-country-{country}"
+    if video_id and "-session-" not in user.lower():
+        sess = re.sub(r"[^A-Za-z0-9]", "", video_id)[:20] or "vid"
+        user = f"{user}-session-{sess}-lifetime-5"
+
+    return (
+        f"http://{quote(user, safe='-._~')}:{quote(password, safe='')}@{host}:{port}"
+    )
+
+
+def _ytt_api_for_proxy(proxy_url: str | None):
+    if not proxy_url:
+        return YouTubeTranscriptApi()
+    return YouTubeTranscriptApi(
+        proxy_config=GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
+    )
+
+
 # --------------------------------------------------------------------------------------
 # Tier 1 — youtube-transcript-api
 # --------------------------------------------------------------------------------------
@@ -171,8 +213,11 @@ def _select_transcript(transcript_list, languages):
     return next(iter(transcript_list), None)
 
 
-def fetch_tier1(video_id: str, languages: list[str], ytt_api=None) -> TranscriptOutcome:
-    ytt_api = ytt_api or YouTubeTranscriptApi()
+def fetch_tier1(
+    video_id: str, languages: list[str], ytt_api=None, proxy_url: str | None = None
+) -> TranscriptOutcome:
+    ytt_api = ytt_api or _ytt_api_for_proxy(proxy_url)
+    source = "captions_api_proxy" if proxy_url else "captions_api"
 
     try:
         transcript_list = ytt_api.list(video_id)
@@ -219,7 +264,7 @@ def fetch_tier1(video_id: str, languages: list[str], ytt_api=None) -> Transcript
     segments = [{"text": s.text, "start": s.start} for s in fetched.snippets]
     return TranscriptOutcome(
         ok=True,
-        source="captions_api",
+        source=source,
         language=transcript.language_code,
         is_auto=transcript.is_generated,
         segments=segments,
@@ -250,6 +295,7 @@ def _subtitle_url_is_translation(url: str | None) -> bool:
     if not url:
         return False
     return bool(parse_qs(urlparse(url).query).get("tlang"))
+
 
 def _ytdlp_json3_candidates(
     info: dict, languages: list[str]
@@ -494,6 +540,7 @@ def process_video(
     tier1_fn=fetch_tier1,
     tier2_fn=fetch_tier2,
     tier3_fn=fetch_tier3,
+    tier1_proxy_fn=None,
 ) -> TranscriptOutcome:
     """Run the tier chain for one video and persist the result. Does not sleep."""
     languages = config.values["transcript_languages"]
@@ -502,6 +549,20 @@ def process_video(
 
     outcome = tier1_fn(video_id, languages)
     tier2_failed = False
+
+    if outcome.blocked:
+        proxy_fn = tier1_proxy_fn
+        if proxy_fn is None:
+            proxy_url = build_proxyscrape_proxy_url(config.secrets, video_id=video_id)
+            if proxy_url:
+                proxy_fn = lambda vid, langs, _url=proxy_url: fetch_tier1(
+                    vid, langs, proxy_url=_url
+                )
+        if proxy_fn is not None:
+            logger.info(
+                "tier1 blocked for %s; retrying once via ProxyScrape residential", video_id
+            )
+            outcome = proxy_fn(video_id, languages)
 
     if not outcome.ok and not outcome.blocked and not (outcome.fatal and outcome.video_missing):
         outcome = tier2_fn(video_id, languages)

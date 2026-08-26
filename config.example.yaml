@@ -24,6 +24,7 @@ youtube_api_quota_warn_fraction: 0.9   # abort the run once this fraction of dai
 transcript_languages: [en]         # native caption tracks only; summaries use output_language
 transcript_delay_seconds: [2, 5]
 max_transcript_fetches_per_run: 40
+# On tier1 429, set PROXYSCRAPE_USERNAME + PROXYSCRAPE_PASSWORD in .env to retry via residential
 enable_whisper_fallback: false
 whisper_max_duration_minutes: 120
 retry_backoff_hours: [6, 12, 24, 48, 96]

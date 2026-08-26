@@ -146,6 +146,11 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path | 
         "YOUTUBE_OAUTH_CLIENT_ID": os.environ.get("YOUTUBE_OAUTH_CLIENT_ID", ""),
         "YOUTUBE_OAUTH_CLIENT_SECRET": os.environ.get("YOUTUBE_OAUTH_CLIENT_SECRET", ""),
         "WEB_AUTH_TOKEN": os.environ.get("WEB_AUTH_TOKEN", ""),
+        "PROXYSCRAPE_USERNAME": os.environ.get("PROXYSCRAPE_USERNAME", ""),
+        "PROXYSCRAPE_PASSWORD": os.environ.get("PROXYSCRAPE_PASSWORD", ""),
+        "PROXYSCRAPE_HOST": os.environ.get("PROXYSCRAPE_HOST", ""),
+        "PROXYSCRAPE_PORT": os.environ.get("PROXYSCRAPE_PORT", ""),
+        "PROXYSCRAPE_COUNTRY": os.environ.get("PROXYSCRAPE_COUNTRY", ""),
     }
 
     channel = values["delivery_channel"]
