@@ -79,6 +79,7 @@ def config(tmp_path):
             "transcript_languages": ["en"],
             "transcript_delay_seconds": [0, 0],
             "max_transcript_fetches_per_run": 40,
+            "transcript_lookback_days": 1,
             "enable_whisper_fallback": False,
             "whisper_max_duration_minutes": 120,
             "retry_backoff_hours": [6, 12, 24, 48, 96],

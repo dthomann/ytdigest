@@ -173,7 +173,7 @@ def test_fetch_transcripts_standalone_uses_transcript_phase(tmp_path, monkeypatc
     insert_video(conn, "v1", VideoState.NEEDS_TRANSCRIPT.value)
     conn.close()
 
-    args = argparse.Namespace(config=str(config_path), limit=None)
+    args = argparse.Namespace(config=str(config_path), limit=None, catch_up=False)
     cli.cmd_fetch_transcripts(args)
 
     conn = db.connect(config.db_path)
@@ -260,7 +260,7 @@ def test_run_sends_alert_on_quota_exceeded(tmp_path, monkeypatch, capsys):
     insert_video(conn, "v1", VideoState.DISCOVERED.value)  # forces a metadata fetch attempt
     conn.close()
 
-    args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout")
+    args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout", catch_up=False, scheduled=False, retry_only=False)
     cli.cmd_run(args)
 
     err = capsys.readouterr().err

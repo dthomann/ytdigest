@@ -22,6 +22,7 @@ DEFAULTS = {
     "transcript_languages": ["en"],
     "transcript_delay_seconds": [2, 5],
     "max_transcript_fetches_per_run": 40,
+    "transcript_lookback_days": 1,  # today + N days back; use --catch-up for older pending
     "enable_whisper_fallback": False,
     "whisper_max_duration_minutes": 120,
     "retry_backoff_hours": [6, 12, 24, 48, 96],
@@ -229,6 +230,10 @@ def _validate(values: dict, config_path: Path) -> None:
     require_type("max_scheduled_retries", int)
     if values["max_scheduled_retries"] < 1:
         raise ConfigError(f"{config_path}: max_scheduled_retries must be >= 1")
+
+    require_type("transcript_lookback_days", int)
+    if values["transcript_lookback_days"] < 0:
+        raise ConfigError(f"{config_path}: transcript_lookback_days must be >= 0")
 
     require_type("web_port", int)
     if not (1 <= values["web_port"] <= 65535):

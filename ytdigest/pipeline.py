@@ -95,9 +95,11 @@ def discover_metadata_classify(conn, config):
     return discover_result, upcoming_ids, quota_error, api_units
 
 
-def _run_transcript_phase(conn, config, limit=None) -> tuple[list[str], transcript_mod.TranscriptPhaseResult]:
+def _run_transcript_phase(
+    conn, config, limit=None, *, catch_up: bool = False
+) -> tuple[list[str], transcript_mod.TranscriptPhaseResult]:
     notes = []
-    result = transcript_mod.run_transcript_phase(conn, config, limit=limit)
+    result = transcript_mod.run_transcript_phase(conn, config, limit=limit, catch_up=catch_up)
     if result.aborted:
         notes.append(f"transcript phase aborted: {result.abort_reason}")
     for err in result.errors:
@@ -247,6 +249,7 @@ def run_pipeline(
     use_lock: bool = True,
     scheduled: bool = False,
     retry_only: bool = False,
+    catch_up: bool = False,
     now: datetime | None = None,
 ) -> RunResult:
     channel = channel or config.values["delivery_channel"]
@@ -288,7 +291,9 @@ def run_pipeline(
                 notes.append(quota_error)
                 status = "partial"
 
-            transcript_notes, transcript_result = _run_transcript_phase(conn, config, limit=limit)
+            transcript_notes, transcript_result = _run_transcript_phase(
+                conn, config, limit=limit, catch_up=catch_up
+            )
             failed_transcript_ids = transcript_result.failed_permanent_ids
             if transcript_notes:
                 notes.extend(transcript_notes)

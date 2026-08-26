@@ -196,6 +196,7 @@ def cmd_run(args) -> None:
             channel=args.channel,
             scheduled=getattr(args, "scheduled", False) or retry_only,
             retry_only=retry_only,
+            catch_up=getattr(args, "catch_up", False),
         )
         if result.skipped:
             return
@@ -216,7 +217,9 @@ def cmd_run(args) -> None:
 def cmd_fetch_transcripts(args) -> None:
     config = _load_config(args)
     conn = _connect(config)
-    result = transcript_mod.run_transcript_phase(conn, config, limit=args.limit)
+    result = transcript_mod.run_transcript_phase(
+        conn, config, limit=args.limit, catch_up=getattr(args, "catch_up", False)
+    )
     print(
         f"Attempted {result.attempted}, succeeded {len(result.succeeded_ids)}, "
         f"failed_permanent {len(result.failed_permanent_ids)}, retrying {result.retrying}"
@@ -386,6 +389,25 @@ def cmd_status(args) -> None:
     ).fetchone()["n"]
     print(f"Pending retries: {pending_retry}")
 
+    pending_total = conn.execute(
+        "SELECT COUNT(*) AS n FROM videos WHERE state = ?",
+        (VideoState.NEEDS_TRANSCRIPT.value,),
+    ).fetchone()["n"]
+    if pending_total:
+        cutoff = transcript_mod.transcript_lookback_cutoff_iso(config)
+        in_window = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM videos
+            WHERE state = ? AND published_at IS NOT NULL AND published_at >= ?
+            """,
+            (VideoState.NEEDS_TRANSCRIPT.value, cutoff),
+        ).fetchone()["n"]
+        older = pending_total - in_window
+        print(
+            f"Transcript queue: {pending_total} pending "
+            f"({in_window} in default window today/yesterday, {older} older — use --catch-up)"
+        )
+
 
 def cmd_web(args) -> None:
     import uvicorn
@@ -530,6 +552,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--limit", type=int, default=None, help="cap on transcript fetches this run")
+    p.add_argument(
+        "--catch-up",
+        action="store_true",
+        help="fetch all pending transcripts (default: only today + yesterday)",
+    )
     p.add_argument("--channel", choices=["telegram", "stdout", "file"], default=None)
     p.add_argument(
         "--scheduled",
@@ -549,6 +576,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("fetch-transcripts", help="run only the transcript-fetching phase")
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument(
+        "--catch-up",
+        action="store_true",
+        help="fetch all pending transcripts (default: only today + yesterday)",
+    )
     p.set_defaults(func=cmd_fetch_transcripts)
 
     p = sub.add_parser("summarize", help="run only the summarization phase")

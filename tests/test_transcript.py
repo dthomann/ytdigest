@@ -258,6 +258,15 @@ def test_build_proxyscrape_proxy_url_adds_country_and_sticky_session():
     assert "s3cret%21" in url  # password URL-encoded
 
 
+def test_build_proxyscrape_proxy_url_rotates_session_on_retry_attempt():
+    secrets = {"PROXYSCRAPE_USERNAME": "alice", "PROXYSCRAPE_PASSWORD": "pw"}
+    u1 = tr.build_proxyscrape_proxy_url(secrets, video_id="abc123XYZ_-", attempt=1)
+    u2 = tr.build_proxyscrape_proxy_url(secrets, video_id="abc123XYZ_-", attempt=2)
+    assert "session-abc123XYZ-lifetime-5" in u1
+    assert "session-abc123XYZr2-lifetime-5" in u2
+    assert u1 != u2
+
+
 def test_build_proxyscrape_proxy_url_respects_host_port_overrides():
     url = tr.build_proxyscrape_proxy_url(
         {
@@ -364,14 +373,22 @@ def test_compute_next_retry_uses_backoff_table():
 # --------------------------------------------------------------------------------------
 
 
-def insert_pending_video(conn, video_id, channel_id="UC1", duration=300, attempts=0, next_retry_at=None):
+def insert_pending_video(
+    conn,
+    video_id,
+    channel_id="UC1",
+    duration=300,
+    attempts=0,
+    next_retry_at=None,
+    published_at="2026-08-26T12:00:00+00:00",
+):
     conn.execute(
         """
         INSERT INTO videos (video_id, channel_id, title, state, duration_seconds,
-                             attempts, next_retry_at, discovered_at, updated_at)
-        VALUES (?, ?, 'Title', 'needs_transcript', ?, ?, ?, 'now', 'now')
+                             attempts, next_retry_at, published_at, discovered_at, updated_at)
+        VALUES (?, ?, 'Title', 'needs_transcript', ?, ?, ?, ?, 'now', 'now')
         """,
-        (video_id, channel_id, duration, attempts, next_retry_at),
+        (video_id, channel_id, duration, attempts, next_retry_at, published_at),
     )
     conn.commit()
 
@@ -515,6 +532,125 @@ def test_process_video_tier1_429_retries_via_proxyscrape(conn, config, tmp_path)
     assert updated["transcript_source"] == "captions_api_proxy"
 
 
+def test_process_video_proxy_fail_does_not_fall_through_to_tier2(conn, config):
+    """After tier1 429, proxy failures must not burn the home IP on tier2."""
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1")
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    called = {"tier2": False, "proxy": 0}
+
+    def boom_tier2(vid, langs):
+        called["tier2"] = True
+        return tr.TranscriptOutcome(ok=False, blocked=True, reason="tier2 blocked: 429")
+
+    def proxy_fail(vid, langs):
+        called["proxy"] += 1
+        return tr.TranscriptOutcome(
+            ok=False, reason="network error (tier1): proxy tunnel failed"
+        )
+
+    outcome = tr.process_video(
+        conn,
+        row,
+        config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
+            ok=False, blocked=True, reason="tier1 blocked: 429"
+        ),
+        tier1_proxy_fn=proxy_fail,
+        tier2_fn=boom_tier2,
+    )
+    assert called["proxy"] == tr.PROXYSCRAPE_MAX_ATTEMPTS
+    assert outcome.blocked
+    assert not called["tier2"]
+    assert "ProxyScrape retry failed" in (outcome.reason or "")
+    updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    assert updated["attempts"] == 0
+    assert "ProxyScrape retry failed" in updated["last_error"]
+
+
+def test_process_video_proxy_succeeds_on_third_attempt(conn, config, tmp_path):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "v1")
+    row = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    called = {"proxy": 0, "tier2": False}
+
+    def boom_tier2(vid, langs):
+        called["tier2"] = True
+        return tr.TranscriptOutcome(ok=False, reason="should not run")
+
+    def proxy_flaky(vid, langs):
+        called["proxy"] += 1
+        if called["proxy"] < 3:
+            return tr.TranscriptOutcome(
+                ok=False, reason="tier1 fetch error: invalid transcript XML"
+            )
+        return make_success_outcome(source="captions_api_proxy")
+
+    outcome = tr.process_video(
+        conn,
+        row,
+        config,
+        tier1_fn=lambda vid, langs: tr.TranscriptOutcome(
+            ok=False, blocked=True, reason="tier1 blocked: 429"
+        ),
+        tier1_proxy_fn=proxy_flaky,
+        tier2_fn=boom_tier2,
+    )
+    assert outcome.ok
+    assert called["proxy"] == 3
+    assert not called["tier2"]
+    updated = conn.execute("SELECT * FROM videos WHERE video_id='v1'").fetchone()
+    assert updated["transcript_source"] == "captions_api_proxy"
+
+
+def test_fetch_tier2_uses_proxy_url_for_download(monkeypatch):
+    """yt-dlp json3 download must go through the residential proxy when proxy_url is set."""
+    info = {
+        "subtitles": {
+            "en": [{"ext": "json3", "url": "https://example.test/tt?lang=en"}],
+        },
+        "automatic_captions": {},
+    }
+    seen = {}
+
+    def fake_extract(video_id, proxy_url=None):
+        seen["extract_proxy"] = proxy_url
+        return info
+
+    def fake_get(url, timeout=20, proxies=None):
+        seen["get_proxies"] = proxies
+        seen["url"] = url
+
+        class Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "events": [
+                        {"tStartMs": 0, "segs": [{"utf8": "hello via proxy"}]},
+                    ]
+                }
+
+        return Resp()
+
+    monkeypatch.setattr(tr.requests, "get", fake_get)
+    outcome = tr.fetch_tier2(
+        "vid",
+        ["en"],
+        extract_info_fn=fake_extract,
+        proxy_url="http://user:pass@proxy.example:6060",
+    )
+    assert outcome.ok
+    assert outcome.source == "ytdlp_proxy"
+    assert seen["extract_proxy"] == "http://user:pass@proxy.example:6060"
+    assert seen["get_proxies"] == {
+        "http": "http://user:pass@proxy.example:6060",
+        "https": "http://user:pass@proxy.example:6060",
+    }
+    assert outcome.segments[0]["text"] == "hello via proxy"
+
+
 def test_process_video_blocked_does_not_bump_attempts(conn, config):
     insert_channel(conn, "UC1")
     insert_pending_video(conn, "v1", attempts=2)
@@ -589,10 +725,63 @@ def test_run_transcript_phase_respects_cap_and_limit(conn, config):
         insert_pending_video(conn, f"v{i}")
 
     result = tr.run_transcript_phase(
-        conn, config, tier1_fn=lambda vid, langs: make_success_outcome(), limit=2
+        conn,
+        config,
+        tier1_fn=lambda vid, langs: make_success_outcome(),
+        limit=2,
+        now=datetime(2026, 8, 26, 18, 0, tzinfo=timezone.utc),
     )
     assert result.attempted == 2
     assert len(result.succeeded_ids) == 2
+
+
+def test_run_transcript_phase_default_skips_older_than_lookback(conn, config):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "old", published_at="2026-08-20T12:00:00+00:00")
+    insert_pending_video(conn, "recent", published_at="2026-08-26T08:00:00+00:00")
+    now = datetime(2026, 8, 26, 18, 0, tzinfo=timezone.utc)
+
+    result = tr.run_transcript_phase(
+        conn,
+        config,
+        tier1_fn=lambda vid, langs: make_success_outcome(),
+        now=now,
+    )
+    assert result.attempted == 1
+    assert result.succeeded_ids == ["recent"]
+    still = {
+        r["video_id"]
+        for r in conn.execute(
+            "SELECT video_id FROM videos WHERE state = 'needs_transcript'"
+        ).fetchall()
+    }
+    assert still == {"old"}
+
+
+def test_run_transcript_phase_catch_up_includes_older(conn, config):
+    insert_channel(conn, "UC1")
+    insert_pending_video(conn, "old", published_at="2026-08-20T12:00:00+00:00")
+    insert_pending_video(conn, "recent", published_at="2026-08-26T08:00:00+00:00")
+    now = datetime(2026, 8, 26, 18, 0, tzinfo=timezone.utc)
+
+    result = tr.run_transcript_phase(
+        conn,
+        config,
+        tier1_fn=lambda vid, langs: make_success_outcome(),
+        catch_up=True,
+        now=now,
+    )
+    assert result.attempted == 2
+    assert set(result.succeeded_ids) == {"old", "recent"}
+
+
+def test_transcript_lookback_cutoff_iso_uses_timezone(config):
+    config.values["timezone"] = "America/New_York"
+    config.values["transcript_lookback_days"] = 1
+    # 2026-08-26 02:00 UTC = 2026-08-25 22:00 EDT → local today Aug 25, lookback start Aug 24 00:00 EDT
+    now = datetime(2026, 8, 26, 2, 0, tzinfo=timezone.utc)
+    cutoff = tr.transcript_lookback_cutoff_iso(config, now=now)
+    assert cutoff.startswith("2026-08-24T04:00:00")  # EDT is UTC-4 in August
 
 
 def test_run_transcript_phase_aborts_on_block(conn, config):
@@ -608,7 +797,12 @@ def test_run_transcript_phase_aborts_on_block(conn, config):
             return tr.TranscriptOutcome(ok=False, blocked=True, reason="IP blocked")
         return make_success_outcome()
 
-    result = tr.run_transcript_phase(conn, config, tier1_fn=flaky_tier1)
+    result = tr.run_transcript_phase(
+        conn,
+        config,
+        tier1_fn=flaky_tier1,
+        now=datetime(2026, 8, 26, 18, 0, tzinfo=timezone.utc),
+    )
     assert result.aborted
     assert result.abort_reason == "IP blocked"
     assert len(calls) == 2  # stopped immediately, did not touch the remaining 3
@@ -628,6 +822,7 @@ def test_run_transcript_phase_flags_tier2_errors(conn, config):
         config,
         tier1_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="no transcript yet"),
         tier2_fn=lambda vid, langs: tr.TranscriptOutcome(ok=False, reason="tier2 download error"),
+        now=datetime(2026, 8, 26, 18, 0, tzinfo=timezone.utc),
     )
     assert result.had_tier2_error
     assert result.retryable_ids == ["v1"]

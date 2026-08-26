@@ -106,9 +106,9 @@ ytdigest bot
 | `add-channel <url\|@handle\|UC…>`                                | Resolving a handle needs `YOUTUBE_API_KEY` (one API call)                              |
 | `import-channels <file>`                                         | Takeout CSV or newline list; UC ids need no network                                    |
 | `seed --since YYYY-MM-DD`                                        | Backfill — run once before the first real `run`                                        |
-| `run [--dry-run] [--limit N] [--channel …]`                      | Full pipeline. systemd adds `--scheduled` so RSS/yt-dlp failures retry the run in 1h   |
+| `run [--dry-run] [--limit N] [--catch-up] [--channel …]`         | Full pipeline. Default transcripts: today+yesterday; `--catch-up` for all pending. systemd adds `--scheduled` for 1h retries |
 | `discover [--dry-run]`                                           | Discovery phase only                                                                   |
-| `fetch-transcripts [--limit N]`                                  | Transcript phase only (3-tier chain, retry/backoff)                                    |
+| `fetch-transcripts [--limit N] [--catch-up]`                     | Transcript phase only (3-tier chain, retry/backoff)                                    |
 | `summarize`                                                      | Summarize every video currently in `has_transcript`                                    |
 | `deliver [--channel telegram\|stdout\|file]`                     | Build + send the digest from current DB state (no discover/transcript/summarize)       |
 | `retry <video_id> \| --all-failed`                               | Reset `failed_permanent` video(s) back to `needs_transcript`                           |
@@ -185,6 +185,7 @@ Secrets never go here — see `.env.example`. Unknown keys and any key that look
 | `transcript_languages`            | `[en]`                  | Caption language preference order: manual in these languages, then auto-generated in these languages, then any available track.                           |
 | `transcript_delay_seconds`        | `[2, 5]`                | Jittered sleep between transcript fetches — the most IP-sensitive phase.                                                                                  |
 | `max_transcript_fetches_per_run`  | `40`                    | Hard cap per run; excess stays queued for next time. Override per invocation with `run --limit N`.                                                        |
+| `transcript_lookback_days`        | `1`                     | Default transcript window: today + this many prior local days. Older pending need `run --catch-up` / `fetch-transcripts --catch-up`.                      |
 | `enable_whisper_fallback`         | `false`                 | Tier-3 ASR fallback via Groq's remote API (never local). Requires `GROQ_API_KEY`.                                                                         |
 | `whisper_max_duration_minutes`    | `120`                   | Skip ASR fallback beyond this length (cost/time control).                                                                                                 |
 | `retry_backoff_hours`             | `[6, 12, 24, 48, 96]`   | Auto-captions are often missing for hours after upload — this is a retryable, not fatal, condition.                                                       |

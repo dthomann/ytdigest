@@ -175,11 +175,13 @@ def test_dry_run_performs_zero_writes_and_zero_outbound_calls(tmp_path, monkeypa
     assert conn.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"] == 0
 
 
-def fake_transcript_phase(conn, config, limit=None):
+def fake_transcript_phase(conn, config, limit=None, **_kwargs):
     from ytdigest.transcript import TranscriptPhaseResult
 
     rows = conn.execute("SELECT video_id FROM videos WHERE state = 'needs_transcript'").fetchall()
     ids = [r["video_id"] for r in rows]
+    if limit is not None:
+        ids = ids[:limit]
     now = "2026-08-05T00:00:00+00:00"
     conn.executemany(
         "UPDATE videos SET state = 'has_transcript', transcript_source = 'captions_api', "
@@ -215,7 +217,7 @@ def test_full_run_writes_digest_and_delivers(tmp_path, monkeypatch, capsys):
     (tmp_path / ".env").write_text("YOUTUBE_API_KEY=test-key\nGEMINI_API_KEY=test-key\n")
     config = seed_channels(config_path)
 
-    args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout")
+    args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout", catch_up=False, scheduled=False, retry_only=False)
     cli.cmd_run(args)
 
     digest_files = list((tmp_path / "data" / "digests").glob("*.md"))
@@ -284,7 +286,7 @@ def test_run_refreshes_stale_live_upcoming(tmp_path, monkeypatch, capsys):
     conn.commit()
     conn.close()
 
-    args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout")
+    args = argparse.Namespace(config=str(config_path), dry_run=False, limit=None, channel="stdout", catch_up=False, scheduled=False, retry_only=False)
     cli.cmd_run(args)
 
     conn = db.connect(config.db_path)

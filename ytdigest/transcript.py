@@ -8,8 +8,11 @@ delay between fetches, a hard cap per run, and immediate phase-abort on any bloc
 signal (including youtube-transcript-api wrapping HTTP 429 as YouTubeRequestFailed — do not
 fall through to tier2 timedtext on the same throttle).
 
-When PROXYSCRAPE_USERNAME + PROXYSCRAPE_PASSWORD are set, a tier1 block/429 is retried once
-via ProxyScrape residential before aborting.
+When PROXYSCRAPE_USERNAME + PROXYSCRAPE_PASSWORD are set, a tier1 block/429 is retried up to
+3 times via ProxyScrape residential (fresh sticky session each attempt). Each attempt tries
+youtube-transcript-api first, then yt-dlp timedtext through the same proxy — HTML-scraped
+caption URLs often return empty 200s; yt-dlp client URLs still work. Never fall through to
+unproxied tier2/3 on the home IP after a rate-limit block.
 """
 from __future__ import annotations
 
@@ -20,9 +23,10 @@ import sqlite3
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from xml.etree.ElementTree import ParseError as XmlParseError
+from zoneinfo import ZoneInfo
 
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -56,6 +60,7 @@ WORDS_PER_MINUTE_HIGH = 200
 # ProxyScrape Regular Residential defaults (override via PROXYSCRAPE_HOST / PROXYSCRAPE_PORT).
 PROXYSCRAPE_DEFAULT_HOST = "rp.scrapegw.com"
 PROXYSCRAPE_DEFAULT_PORT = "6060"
+PROXYSCRAPE_MAX_ATTEMPTS = 3
 
 
 # --------------------------------------------------------------------------------------
@@ -161,12 +166,15 @@ def _is_rate_limited(exc: BaseException) -> bool:
     return "429" in msg or "too many requests" in msg
 
 
-def build_proxyscrape_proxy_url(secrets: dict, *, video_id: str | None = None) -> str | None:
+def build_proxyscrape_proxy_url(
+    secrets: dict, *, video_id: str | None = None, attempt: int = 1
+) -> str | None:
     """Build an HTTP proxy URL for ProxyScrape residential, or None if not configured.
 
     Credentials come from .env (PROXYSCRAPE_USERNAME / PROXYSCRAPE_PASSWORD). Optional:
     PROXYSCRAPE_HOST, PROXYSCRAPE_PORT, PROXYSCRAPE_COUNTRY (e.g. ``ch`` / ``us``).
     When ``video_id`` is set, a short sticky session is appended so list+fetch share one IP.
+    ``attempt`` (1-based) is folded into the session id so retries rotate residential IPs.
     """
     user = (secrets.get("PROXYSCRAPE_USERNAME") or "").strip()
     password = secrets.get("PROXYSCRAPE_PASSWORD") or ""
@@ -179,7 +187,9 @@ def build_proxyscrape_proxy_url(secrets: dict, *, video_id: str | None = None) -
     if country and f"-country-{country}" not in user.lower():
         user = f"{user}-country-{country}"
     if video_id and "-session-" not in user.lower():
-        sess = re.sub(r"[^A-Za-z0-9]", "", video_id)[:20] or "vid"
+        sess = re.sub(r"[^A-Za-z0-9]", "", video_id)[:16] or "vid"
+        if attempt > 1:
+            sess = f"{sess}r{attempt}"
         user = f"{user}-session-{sess}-lifetime-5"
 
     return (
@@ -276,7 +286,7 @@ def fetch_tier1(
 # --------------------------------------------------------------------------------------
 
 
-def _extract_info(video_id: str) -> dict:
+def _extract_info(video_id: str, proxy_url: str | None = None) -> dict:
     ydl_opts = {
         "skip_download": True,
         "quiet": True,
@@ -286,6 +296,8 @@ def _extract_info(video_id: str) -> dict:
         "socket_timeout": 20,
         "ignore_no_formats_error": True,
     }
+    if proxy_url:
+        ydl_opts["proxy"] = proxy_url
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
 
@@ -364,12 +376,25 @@ def _parse_json3(data: dict) -> list[dict]:
 
 
 def fetch_tier2(
-    video_id: str, languages: list[str], extract_info_fn=_extract_info, fetch_fn=None
+    video_id: str,
+    languages: list[str],
+    extract_info_fn=_extract_info,
+    fetch_fn=None,
+    proxy_url: str | None = None,
 ) -> TranscriptOutcome:
-    fetch_fn = fetch_fn or (lambda url: requests.get(url, timeout=20))
+    if fetch_fn is None:
+        if proxy_url:
+            fetch_fn = lambda url, _p=proxy_url: requests.get(
+                url, timeout=20, proxies={"http": _p, "https": _p}
+            )
+        else:
+            fetch_fn = lambda url: requests.get(url, timeout=20)
 
     try:
-        info = extract_info_fn(video_id)
+        try:
+            info = extract_info_fn(video_id, proxy_url=proxy_url)
+        except TypeError:
+            info = extract_info_fn(video_id)
     except yt_dlp.utils.DownloadError as exc:
         msg = str(exc).lower()
         if "private video" in msg or "unavailable" in msg or "has been removed" in msg:
@@ -397,7 +422,8 @@ def fetch_tier2(
     if not segments:
         return TranscriptOutcome(ok=False, reason="tier2: subtitle track was empty")
 
-    return TranscriptOutcome(ok=True, source="ytdlp", language=lang, is_auto=is_auto, segments=segments)
+    source = "ytdlp_proxy" if proxy_url else "ytdlp"
+    return TranscriptOutcome(ok=True, source=source, language=lang, is_auto=is_auto, segments=segments)
 
 
 # --------------------------------------------------------------------------------------
@@ -515,6 +541,19 @@ def compute_next_retry(attempts: int, backoff_hours: list[int], now: datetime | 
     return (now + timedelta(hours=backoff_hours[idx])).replace(microsecond=0).isoformat()
 
 
+def transcript_lookback_cutoff_iso(config, *, now: datetime | None = None) -> str:
+    """UTC ISO start of (local today − transcript_lookback_days).
+
+    Default lookback_days=1 means today and yesterday in ``config.timezone``.
+    """
+    now = now or datetime.now(timezone.utc)
+    days = int(config.values["transcript_lookback_days"])
+    tz = ZoneInfo(config.values["timezone"])
+    local_today = now.astimezone(tz).date()
+    start_local = datetime.combine(local_today - timedelta(days=days), time.min, tzinfo=tz)
+    return start_local.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
 # --------------------------------------------------------------------------------------
 # Orchestration
 # --------------------------------------------------------------------------------------
@@ -549,20 +588,67 @@ def process_video(
 
     outcome = tier1_fn(video_id, languages)
     tier2_failed = False
+    tier1_was_blocked = outcome.blocked
+    proxy_attempted = False
 
     if outcome.blocked:
-        proxy_fn = tier1_proxy_fn
-        if proxy_fn is None:
-            proxy_url = build_proxyscrape_proxy_url(config.secrets, video_id=video_id)
-            if proxy_url:
-                proxy_fn = lambda vid, langs, _url=proxy_url: fetch_tier1(
-                    vid, langs, proxy_url=_url
+        use_injected = tier1_proxy_fn is not None
+        can_proxy = use_injected or build_proxyscrape_proxy_url(config.secrets) is not None
+        if can_proxy:
+            proxy_attempted = True
+            for attempt in range(1, PROXYSCRAPE_MAX_ATTEMPTS + 1):
+                logger.info(
+                    "tier1 blocked for %s; ProxyScrape residential attempt %d/%d",
+                    video_id,
+                    attempt,
+                    PROXYSCRAPE_MAX_ATTEMPTS,
                 )
-        if proxy_fn is not None:
-            logger.info(
-                "tier1 blocked for %s; retrying once via ProxyScrape residential", video_id
+                if use_injected:
+                    outcome = tier1_proxy_fn(video_id, languages)
+                else:
+                    proxy_url = build_proxyscrape_proxy_url(
+                        config.secrets, video_id=video_id, attempt=attempt
+                    )
+                    outcome = fetch_tier1(video_id, languages, proxy_url=proxy_url)
+                    if (
+                        not outcome.ok
+                        and not outcome.blocked
+                        and not (outcome.fatal and outcome.video_missing)
+                    ):
+                        logger.info(
+                            "tier1 via proxy failed for %s (%s); trying yt-dlp via same proxy",
+                            video_id,
+                            outcome.reason,
+                        )
+                        outcome = fetch_tier2(video_id, languages, proxy_url=proxy_url)
+                if outcome.ok:
+                    break
+                logger.warning(
+                    "ProxyScrape attempt %d/%d failed for %s: ok=%s blocked=%s reason=%s",
+                    attempt,
+                    PROXYSCRAPE_MAX_ATTEMPTS,
+                    video_id,
+                    outcome.ok,
+                    outcome.blocked,
+                    outcome.reason,
+                )
+                if attempt < PROXYSCRAPE_MAX_ATTEMPTS:
+                    jittered_sleep(1, 2)
+
+    # After a rate-limit block, never fall through to unproxied tier2/3 on the home IP.
+    if (
+        tier1_was_blocked
+        and proxy_attempted
+        and not outcome.ok
+        and not (outcome.fatal and outcome.video_missing)
+    ):
+        reason = outcome.reason or "unknown"
+        if not outcome.blocked:
+            outcome = TranscriptOutcome(
+                ok=False,
+                blocked=True,
+                reason=f"ProxyScrape retry failed after tier1 block: {reason}",
             )
-            outcome = proxy_fn(video_id, languages)
 
     if not outcome.ok and not outcome.blocked and not (outcome.fatal and outcome.video_missing):
         outcome = tier2_fn(video_id, languages)
@@ -669,20 +755,41 @@ def run_transcript_phase(
     tier2_fn=fetch_tier2,
     tier3_fn=fetch_tier3,
     limit: int | None = None,
+    *,
+    catch_up: bool = False,
+    now: datetime | None = None,
 ) -> TranscriptPhaseResult:
     cap = config.values["max_transcript_fetches_per_run"]
     if limit is not None:
         cap = min(cap, limit)
 
-    now = utcnow_iso()
+    now_dt = now or datetime.now(timezone.utc)
+    now_iso = now_dt.replace(microsecond=0).isoformat()
+    params: list = [VideoState.NEEDS_TRANSCRIPT.value, now_iso]
+    lookback_sql = ""
+    if not catch_up:
+        cutoff = transcript_lookback_cutoff_iso(config, now=now_dt)
+        lookback_sql = " AND published_at IS NOT NULL AND published_at >= ?"
+        params.append(cutoff)
+        logger.info(
+            "transcript phase: default window published_at>=%s (lookback_days=%s); "
+            "pass --catch-up for all pending",
+            cutoff,
+            config.values["transcript_lookback_days"],
+        )
+    else:
+        logger.info("transcript phase: --catch-up, fetching all pending needs_transcript")
+
+    params.append(cap)
     rows = conn.execute(
-        """
+        f"""
         SELECT * FROM videos
         WHERE state = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)
-        ORDER BY discovered_at
+        {lookback_sql}
+        ORDER BY published_at IS NULL, published_at DESC, discovered_at
         LIMIT ?
         """,
-        (VideoState.NEEDS_TRANSCRIPT.value, now, cap),
+        params,
     ).fetchall()
 
     delay_low, delay_high = config.values["transcript_delay_seconds"]
